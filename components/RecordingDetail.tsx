@@ -12,7 +12,6 @@ import { RecordingMeta, RecordingSegment, Template } from "@/lib/types";
 import { formatElapsed } from "@/lib/format";
 import { renderMarkdown } from "@/lib/markdown";
 import {
-  BackIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
   CopyIcon,
@@ -21,6 +20,7 @@ import {
   PlayIcon,
   ShareIcon,
 } from "./icons";
+import BrandHeader from "./BrandHeader";
 
 type Tab = "report" | "transcript";
 
@@ -165,8 +165,14 @@ export default function RecordingDetail({
       const reportData = await reportRes.json();
       if (!reportRes.ok) throw new Error(reportData.error || "Report generation failed");
 
+      const generatedTitle =
+        typeof reportData.title === "string" && reportData.title.trim()
+          ? reportData.title.trim()
+          : null;
+
       const updated: RecordingMeta = {
         ...meta,
+        title: generatedTitle ?? meta.title,
         status: "done",
         transcript,
         reportMarkdown: String(reportData.report ?? ""),
@@ -245,15 +251,15 @@ export default function RecordingDetail({
   }
 
   if (loading) {
-    return <div className="p-6 text-center text-gray-500">Loading…</div>;
+    return <div className="p-6 text-center text-slate-500">Loading…</div>;
   }
 
   if (!meta) {
     return (
-      <div className="p-6 text-center text-gray-500">
+      <div className="p-6 text-center text-slate-500">
         Recording not found.
         <div className="mt-4">
-          <button onClick={onBack} className="text-brand font-medium">
+          <button onClick={onBack} className="text-accent-light font-medium">
             Go back
           </button>
         </div>
@@ -265,28 +271,36 @@ export default function RecordingDetail({
   const currentSegment = segments[playingIndex];
 
   return (
-    <div className="min-h-screen pb-10">
-      <header className="bg-brand text-white px-4 py-4 flex items-center gap-3 sticky top-0 z-10">
-        <button onClick={onBack} aria-label="Back" className="text-xl shrink-0">
-          <BackIcon />
-        </button>
-        <h1 className="text-lg font-semibold truncate flex-1">{meta.title}</h1>
-        <button onClick={handleRename} className="text-xs bg-white/15 hover:bg-white/25 rounded-full px-3 py-1.5 transition shrink-0">
-          Rename
-        </button>
-        <button onClick={handleDelete} className="text-xs bg-white/15 hover:bg-white/25 rounded-full px-3 py-1.5 transition shrink-0">
-          Delete
-        </button>
-      </header>
+    <div className="min-h-screen pb-10 bg-grid">
+      <BrandHeader
+        title={meta.title}
+        onBack={onBack}
+        right={
+          <>
+            <button
+              onClick={handleRename}
+              className="text-xs bg-white/5 hover:bg-white/10 border border-white/10 rounded-full px-3 py-1.5 transition text-slate-200"
+            >
+              Rename
+            </button>
+            <button
+              onClick={handleDelete}
+              className="text-xs bg-white/5 hover:bg-white/10 border border-white/10 rounded-full px-3 py-1.5 transition text-slate-400 hover:text-red-400"
+            >
+              Delete
+            </button>
+          </>
+        }
+      />
 
-      <main className="px-4 pt-4 max-w-2xl mx-auto">
+      <main className="px-4 pt-6 max-w-2xl mx-auto">
         {/* Playback */}
-        <div className="bg-white rounded-xl shadow-sm p-4 flex items-center gap-3">
+        <div className="glass-card rounded-xl p-4 flex items-center gap-3">
           <button
             onClick={() => skipToSegment(playingIndex - 1)}
             disabled={playingIndex <= 0}
             aria-label="Previous segment"
-            className="text-gray-500 disabled:opacity-30 text-xl"
+            className="text-slate-400 disabled:opacity-30 text-xl hover:text-slate-200 transition"
           >
             <ChevronLeftIcon />
           </button>
@@ -294,7 +308,7 @@ export default function RecordingDetail({
           <button
             onClick={togglePlay}
             aria-label={isPlaying ? "Pause" : "Play"}
-            className="w-11 h-11 rounded-full bg-brand text-white flex items-center justify-center text-xl shrink-0"
+            className="w-11 h-11 rounded-full bg-brand-gradient text-white flex items-center justify-center text-xl shrink-0 shadow-glow-blue"
           >
             {isPlaying ? <PauseIcon /> : <PlayIcon />}
           </button>
@@ -303,12 +317,12 @@ export default function RecordingDetail({
             onClick={() => skipToSegment(playingIndex + 1)}
             disabled={playingIndex >= segments.length - 1}
             aria-label="Next segment"
-            className="text-gray-500 disabled:opacity-30 text-xl"
+            className="text-slate-400 disabled:opacity-30 text-xl hover:text-slate-200 transition"
           >
             <ChevronRightIcon />
           </button>
 
-          <div className="flex-1 text-xs text-gray-500 text-right">
+          <div className="flex-1 text-xs text-slate-500 text-right">
             {segments.length > 1 && <div>Part {playingIndex + 1} of {segments.length}</div>}
             <div>
               {formatElapsed(segTime * 1000)}
@@ -323,30 +337,32 @@ export default function RecordingDetail({
         <button
           onClick={openTemplatePicker}
           disabled={processing}
-          className="w-full mt-4 bg-brand hover:bg-brand-dark disabled:opacity-60 text-white rounded-lg py-2.5 font-medium transition"
+          className="w-full mt-4 bg-brand-gradient hover:brightness-110 disabled:opacity-60 text-white rounded-lg py-2.5 font-medium transition shadow-glow-blue"
         >
           {meta.reportMarkdown ? "Regenerate report" : "Generate report"}
         </button>
 
         {processing && (
-          <div className="mt-4 flex items-center gap-3 text-sm text-gray-600">
-            <span className="w-5 h-5 border-2 border-brand border-t-transparent rounded-full animate-spin shrink-0" />
+          <div className="mt-4 flex items-center gap-3 text-sm text-slate-400">
+            <span className="w-5 h-5 border-2 border-accent border-t-transparent rounded-full animate-spin shrink-0" />
             {processingStatus}
           </div>
         )}
 
         {meta.status === "error" && meta.errorMessage && (
-          <p className="mt-4 text-sm text-red-600">Something went wrong: {meta.errorMessage}</p>
+          <p className="mt-4 text-sm text-red-400">Something went wrong: {meta.errorMessage}</p>
         )}
 
         {/* Tabs + content */}
         {hasContent && (
           <>
-            <div className="mt-6 flex border-b border-gray-200">
+            <div className="mt-6 flex border-b border-white/10">
               <button
                 onClick={() => setActiveTab("report")}
                 className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition ${
-                  activeTab === "report" ? "border-brand text-brand" : "border-transparent text-gray-500"
+                  activeTab === "report"
+                    ? "border-accent text-accent-light"
+                    : "border-transparent text-slate-500 hover:text-slate-300"
                 }`}
               >
                 Report
@@ -354,21 +370,23 @@ export default function RecordingDetail({
               <button
                 onClick={() => setActiveTab("transcript")}
                 className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition ${
-                  activeTab === "transcript" ? "border-brand text-brand" : "border-transparent text-gray-500"
+                  activeTab === "transcript"
+                    ? "border-accent text-accent-light"
+                    : "border-transparent text-slate-500 hover:text-slate-300"
                 }`}
               >
                 Transcript
               </button>
             </div>
 
-            <div className="mt-4 bg-white rounded-xl shadow-sm p-4">
+            <div className="mt-4 glass-card rounded-xl p-4">
               {activeTab === "report" ? (
                 <div
-                  className="markdown-body text-sm text-gray-800"
+                  className="markdown-body text-sm"
                   dangerouslySetInnerHTML={{ __html: renderMarkdown(meta.reportMarkdown ?? "No report yet.") }}
                 />
               ) : (
-                <p className="text-sm text-gray-800 whitespace-pre-wrap leading-relaxed">
+                <p className="text-sm text-slate-300 whitespace-pre-wrap leading-relaxed">
                   {meta.transcript ?? "No transcript yet."}
                 </p>
               )}
@@ -377,19 +395,19 @@ export default function RecordingDetail({
             <div className="mt-4 flex gap-3">
               <button
                 onClick={handleShare}
-                className="flex-1 border border-brand text-brand rounded-lg py-2.5 font-medium hover:bg-brand/5 transition flex items-center justify-center gap-2"
+                className="flex-1 border border-white/15 text-slate-200 rounded-lg py-2.5 font-medium hover:bg-white/5 transition flex items-center justify-center gap-2"
               >
                 <ShareIcon /> Share
               </button>
               <button
                 onClick={handleCopy}
-                className="flex-1 border border-brand text-brand rounded-lg py-2.5 font-medium hover:bg-brand/5 transition flex items-center justify-center gap-2"
+                className="flex-1 border border-white/15 text-slate-200 rounded-lg py-2.5 font-medium hover:bg-white/5 transition flex items-center justify-center gap-2"
               >
                 <CopyIcon /> Copy
               </button>
               <button
                 onClick={handleDownload}
-                className="flex-1 border border-brand text-brand rounded-lg py-2.5 font-medium hover:bg-brand/5 transition flex items-center justify-center gap-2"
+                className="flex-1 border border-white/15 text-slate-200 rounded-lg py-2.5 font-medium hover:bg-white/5 transition flex items-center justify-center gap-2"
               >
                 <DownloadIcon /> Save
               </button>
@@ -399,25 +417,25 @@ export default function RecordingDetail({
       </main>
 
       {showTemplatePicker && (
-        <div className="fixed inset-0 bg-black/40 flex items-end sm:items-center justify-center z-20 p-4">
-          <div className="bg-white rounded-xl shadow-lg w-full max-w-sm p-4">
-            <h2 className="text-base font-semibold text-gray-900 mb-3">Choose a report template</h2>
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center z-20 p-4">
+          <div className="glass-card rounded-xl shadow-glow w-full max-w-sm p-4">
+            <h2 className="text-base font-semibold text-slate-100 mb-3">Choose a report template</h2>
             <ul className="space-y-2">
               {templates.map((t) => (
                 <li key={t.id}>
                   <button
                     onClick={() => generateReport(t)}
-                    className="w-full text-left px-3 py-2.5 rounded-lg border border-gray-200 hover:border-brand hover:bg-brand/5 transition"
+                    className="w-full text-left px-3 py-2.5 rounded-lg border border-white/10 hover:border-accent/50 hover:bg-white/5 transition"
                   >
-                    <div className="font-medium text-gray-900">{t.name}</div>
-                    <div className="text-xs text-gray-500">{t.isBuiltIn ? "Built-in" : "Custom"}</div>
+                    <div className="font-medium text-slate-100">{t.name}</div>
+                    <div className="text-xs text-slate-500">{t.isBuiltIn ? "Built-in" : "Custom"}</div>
                   </button>
                 </li>
               ))}
             </ul>
             <button
               onClick={() => setShowTemplatePicker(false)}
-              className="w-full mt-3 text-sm text-gray-500 py-2"
+              className="w-full mt-3 text-sm text-slate-500 hover:text-slate-300 py-2 transition"
             >
               Cancel
             </button>

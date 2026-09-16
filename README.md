@@ -1,8 +1,10 @@
-# MeetingScribe (web)
+# KoreVia MeetingScribe (web)
 
 Record a meeting in your browser, pause/resume as needed, and turn it into a structured report
 (SOAP-style: Subjective / Objective / Assessment / Plan, with action items) once you're done.
-Built to live on GitHub and deploy on Vercel with no server to manage.
+Built to live on GitHub and deploy on Vercel with no server to manage. Branded for
+**KoreVia Solutions**, with a flashy dark/gradient "AI-powered" theme and a simple built-in
+login so it isn't wide open to the public internet.
 
 **This one has actually been built and tested in the environment I wrote it in** — `npm install`
 and `npm run build` both succeed with zero errors, and both API routes were exercised against the
@@ -28,9 +30,24 @@ new tool.
 - **Templates** — two built in: a **SOAP Meeting Note** (Subjective / Objective / Assessment /
   Plan — what you asked for) and a more conventional **Business Meeting** template (summary,
   attendees, decisions, action items, next steps). Add your own in plain English any time.
+- **Auto-titling** — once a report is generated, the app asks Claude for a short, specific
+  meeting title based on what was actually discussed (e.g. "Q3 Budget Review With Finance
+  Team") and renames the recording automatically, replacing the generic timestamp title. You
+  can still rename it by hand any time with the "Rename" button.
 
 Your OpenAI and Anthropic API keys live only as environment variables on the server (Vercel) —
 they're never sent to or stored in the browser.
+
+## Login
+
+The whole app sits behind a simple username/password gate (checked in `middleware.ts`), so a
+stranger who finds your deployed URL can't burn your API budget. Both the username and password
+default to **`korevia`** / **`korevia`**. To use a stronger password, set the `AUTH_USERNAME`
+and `AUTH_PASSWORD` environment variables in Vercel (same place as your API keys) and redeploy.
+
+This is a single shared password, not a real user-accounts system — good enough to keep the
+app private to your team, not meant for protecting sensitive data. The session is a signed
+cookie valid for 30 days; there's a "Logout" button on the home screen.
 
 ## Deploying it
 
@@ -63,10 +80,15 @@ git push -u origin main
    - `CLAUDE_MODEL` (optional) — defaults to `claude-sonnet-4-5-20250929` if you leave it out.
      Model names change over time; if report generation ever fails with a "model not found"
      error, check <https://docs.claude.com> for the current ID and set it here.
+   - `AUTH_USERNAME` / `AUTH_PASSWORD` (optional) — override the default `korevia` / `korevia`
+     login. Skip these if the default is fine for now; add them later any time.
 4. Click **Deploy**. A minute or two later you'll have a live URL
    (`meetingscribe-web.vercel.app` or similar).
 
-Any time you push a new commit to `main`, Vercel redeploys automatically.
+Any time you push a new commit to `main`, Vercel redeploys automatically. Any time you add or
+change an environment variable on an **existing** deployment, you need to trigger a
+**Redeploy** (Deployments tab → ⋯ on the latest deployment → Redeploy) for it to take effect —
+adding the variable alone doesn't update a build that already ran.
 
 ### Running it locally first (optional but recommended)
 
@@ -92,10 +114,8 @@ over plain `http://` on a different machine.
 - **Function time limits**: each transcription request handles one ~4-minute segment, and report
   writing is one Claude call — both comfortably fit inside Vercel's default serverless function
   timeout. If you ever raise the segment length, watch for timeouts on longer segments.
-- **No auth**: anyone with your deployed URL can use it, and every use spends your API keys. Fine
-  for a personal tool only you know the link to; if you want to share it more broadly, you'd want
-  to add some form of access control (e.g. Vercel's password protection on Pro plans, or a simple
-  shared-passphrase check in the API routes).
+- **Login is a single shared password**, not real accounts — see the "Login" section above. It
+  keeps casual visitors out; it isn't meant to withstand a determined attacker.
 - **Markdown rendering** for the report view is a small hand-written renderer (headings, bullet
   lists, bold) rather than a full Markdown library — it covers exactly the format the report
   prompt asks Claude to produce, but won't handle arbitrary Markdown if you hand-edit a template
@@ -106,11 +126,16 @@ over plain `http://` on a different machine.
 ```
 app/
   page.tsx                    Top-level view switcher (list / record / detail / templates)
-  layout.tsx, globals.css     App shell + Tailwind
+  layout.tsx, globals.css     App shell + Tailwind (dark, KoreVia-branded theme)
+  login/page.tsx               Branded login screen + "About KoreVia" blurb
   api/transcribe/route.ts     Serverless: one audio segment -> OpenAI Whisper -> text
-  api/generate-report/route.ts Serverless: transcript + template -> Claude -> Markdown report
+  api/generate-report/route.ts Serverless: transcript + template -> Claude -> title + Markdown report
+  api/login/route.ts           Checks username/password, sets the session cookie
+  api/logout/route.ts          Clears the session cookie
+middleware.ts                 Auth gate — redirects to /login without a valid session cookie
 components/
-  Recorder.tsx                Recording screen (start/pause/resume/stop)
+  BrandHeader.tsx              Shared logo + title header used by every screen
+  Recorder.tsx                 Recording screen (start/pause/resume/stop)
   RecordingsList.tsx           Home screen
   RecordingDetail.tsx          Playback, generate report, transcript/report tabs, share/export
   TemplatesManager.tsx         Add/edit/duplicate/delete templates
@@ -118,7 +143,10 @@ components/
 lib/
   audio.ts                    SegmentedRecorder — the chunked MediaRecorder wrapper
   db.ts                       IndexedDB storage for recordings, segments, templates
+  auth.ts                     Shared login-credential + session-token helpers
   types.ts, format.ts, markdown.ts
+public/
+  korevia-logo.png             KoreVia Solutions logo, used on the login screen and app header
 ```
 
 ## Extending it

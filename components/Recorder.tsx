@@ -5,7 +5,8 @@ import { SegmentedRecorder, RecorderState } from "@/lib/audio";
 import { addSegment, saveRecording, deleteRecording } from "@/lib/db";
 import { RecordingMeta } from "@/lib/types";
 import { formatElapsed } from "@/lib/format";
-import { BackIcon, MicIcon, StopIcon } from "./icons";
+import { MicIcon, StopIcon } from "./icons";
+import BrandHeader from "./BrandHeader";
 
 export default function Recorder({
   onDone,
@@ -144,33 +145,31 @@ export default function Recorder({
   }
 
   return (
-    <div className="min-h-screen flex flex-col">
-      <header className="bg-brand text-white px-4 py-4 flex items-center gap-3">
-        <button onClick={handleBack} aria-label="Back" className="text-xl">
-          <BackIcon />
-        </button>
-        <h1 className="text-lg font-semibold">New recording</h1>
-      </header>
+    <div className="min-h-screen flex flex-col bg-grid">
+      <BrandHeader title="New recording" onBack={handleBack} />
 
       <main className="flex-1 flex flex-col items-center justify-center px-6 gap-6">
-        <div className="text-5xl font-mono font-bold text-gray-900 tabular-nums">
+        <div className="text-6xl font-mono font-bold gradient-text tabular-nums">
           {formatElapsed(elapsedMs)}
         </div>
-        <div className="text-sm text-gray-500">
+        <div className="text-sm text-slate-400 flex items-center gap-2">
+          {state === "recording" && (
+            <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse-slow" />
+          )}
           {state === "idle" && "Tap to start recording"}
           {state === "recording" && "Recording…"}
           {state === "paused" && "Paused"}
         </div>
 
         {error && (
-          <p className="text-sm text-red-600 text-center max-w-xs">{error}</p>
+          <p className="text-sm text-red-400 text-center max-w-xs">{error}</p>
         )}
 
         <button
           onClick={state === "idle" ? handleStart : handleStop}
           disabled={busy}
           aria-label={state === "idle" ? "Start recording" : "Stop and save"}
-          className="w-28 h-28 rounded-full bg-accent hover:bg-red-500 disabled:opacity-60 text-white flex items-center justify-center text-4xl shadow-lg transition"
+          className="w-28 h-28 rounded-full bg-brand-gradient hover:brightness-110 disabled:opacity-60 text-white flex items-center justify-center text-4xl shadow-glow-blue transition"
         >
           {state === "idle" ? <MicIcon /> : <StopIcon />}
         </button>
@@ -179,7 +178,7 @@ export default function Recorder({
           <button
             onClick={handlePauseResume}
             disabled={busy}
-            className="border border-brand text-brand rounded-full px-6 py-2 font-medium hover:bg-brand/5 transition"
+            className="border border-white/15 text-slate-200 rounded-full px-6 py-2 font-medium hover:bg-white/5 transition"
           >
             {state === "recording" ? "Pause" : "Resume"}
           </button>
@@ -189,7 +188,7 @@ export default function Recorder({
           <button
             onClick={handleDiscard}
             disabled={busy}
-            className="text-red-600 text-sm font-medium underline-offset-2 hover:underline"
+            className="text-red-400 text-sm font-medium underline-offset-2 hover:underline"
           >
             Discard
           </button>

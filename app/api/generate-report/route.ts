@@ -6,8 +6,11 @@ export const maxDuration = 60;
 const SYSTEM_PROMPT =
   "You are an expert note-taker who writes clear, accurate reports strictly from the " +
   "transcript you are given. You never invent names, numbers, dates, or commitments that " +
-  "are not present in the transcript. Respond with the report only, in Markdown, and " +
-  "nothing else.";
+  "are not present in the transcript. " +
+  "Respond in exactly this format and nothing else: first a single line starting with " +
+  "'TITLE: ' followed by a short, specific meeting title (5-8 words, no quotes, based on " +
+  "what was actually discussed — e.g. 'TITLE: Q3 Budget Review With Finance Team'), then a " +
+  "line containing only '---', then the full report in Markdown.";
 
 const DEFAULT_MODEL = "claude-sonnet-4-5-20250929";
 
@@ -23,6 +26,18 @@ function extractAnthropicError(body: string): string {
 interface AnthropicContentBlock {
   type: string;
   text?: string;
+}
+
+/** Splits the model's "TITLE: ...\n---\n<report>" response into its parts. Falls back to
+ *  treating the whole response as the report if the model didn't follow the format. */
+function parseReportResponse(raw: string): { title: string | null; report: string } {
+  const match = raw.match(/^\s*TITLE:\s*(.+?)\s*\r?\n-{3,}\s*\r?\n([\s\S]*)$/);
+  if (match) {
+    const title = match[1].trim().replace(/^["']|["']$/g, "");
+    const report = match[2].trim();
+    if (title && report) return { title, report };
+  }
+  return { title: null, report: raw.trim() };
 }
 
 export async function POST(req: Request) {
@@ -81,7 +96,9 @@ export async function POST(req: Request) {
       .join("")
       .trim();
 
-    return NextResponse.json({ report: text });
+    const { title, report } = parseReportResponse(text);
+
+    return NextResponse.json({ report, title });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown report generation error";
     return NextResponse.json({ error: message }, { status: 500 });

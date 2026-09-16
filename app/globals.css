@@ -8,17 +8,45 @@ body {
 }
 
 body {
-  background-color: #f5f7fa;
-  color: #1a1a1a;
+  background-color: #05070d;
+  color: #e2e8f0;
+  background-image:
+    radial-gradient(ellipse 80% 50% at 20% -10%, rgba(37, 99, 235, 0.25), transparent),
+    radial-gradient(ellipse 80% 50% at 100% 0%, rgba(20, 184, 166, 0.18), transparent);
+  background-attachment: fixed;
 }
 
-/* Simple, dependency-free markdown rendering for the generated report */
+/* Faint technical grid overlay, purely decorative */
+.bg-grid {
+  background-image:
+    linear-gradient(rgba(148, 163, 184, 0.07) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(148, 163, 184, 0.07) 1px, transparent 1px);
+  background-size: 32px 32px;
+}
+
+.glass-card {
+  background: rgba(15, 23, 42, 0.55);
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  backdrop-filter: blur(12px);
+}
+
+.gradient-text {
+  background-image: linear-gradient(120deg, #60a5fa 0%, #2dd4bf 60%, #22d3ee 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* Markdown rendering for the generated report, dark-theme variant */
 .markdown-body h2 {
-  font-size: 1.125rem;
+  font-size: 1.05rem;
   font-weight: 700;
   margin-top: 1.25rem;
   margin-bottom: 0.5rem;
-  color: #1e88e5;
+  background-image: linear-gradient(120deg, #7dd3fc, #2dd4bf);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
 }
 
 .markdown-body h2:first-child {
@@ -29,13 +57,29 @@ body {
   list-style: disc;
   padding-left: 1.5rem;
   margin-bottom: 0.75rem;
+  color: #cbd5e1;
 }
 
 .markdown-body p {
   margin-bottom: 0.75rem;
   line-height: 1.6;
+  color: #cbd5e1;
 }
 
 .markdown-body strong {
   font-weight: 600;
+  color: #f1f5f9;
+}
+
+/* Scrollbar polish for the dark theme (WebKit only; harmless no-op elsewhere) */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.25);
+  border-radius: 999px;
 }

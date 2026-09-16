@@ -33,7 +33,7 @@ export default function Home() {
   }, [view]);
 
   if (!ready) {
-    return <div className="p-6 text-center text-gray-500">Loading…</div>;
+    return <div className="min-h-screen flex items-center justify-center text-slate-500">Loading…</div>;
   }
 
   switch (view.name) {
