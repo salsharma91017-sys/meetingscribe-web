@@ -160,9 +160,24 @@ Two related changes worth knowing about, found while adding the white-paper temp
   fixes it on your next redeploy. If you *did* set `CLAUDE_MODEL` explicitly to the old value,
   update or remove it.
 - The report length cap (`max_tokens`) was 4096, tight enough to risk truncating a genuinely
-  detailed report (like the new white paper template). It's now 16000 — `claude-sonnet-5`
-  supports up to 128K output tokens in a standard request, no special configuration needed, so
-  this has plenty of headroom without being wasteful.
+  detailed report (like the white paper template). It's now 8000.
+
+### Fixed: "Report generation failed: The request took too long and timed out." on the white paper template
+
+Raising `max_tokens` to generate longer reports (above) initially went to 16000, and the
+function's `maxDuration` was only 90s. At Sonnet's typical output speed (~65 tokens/sec), a
+response that actually used close to the full 16000-token budget could take up to ~4 minutes on
+its own — comfortably longer than 90s, so Vercel killed the function and returned a 504
+(`FUNCTION_INVOCATION_TIMEOUT`), which the app correctly reported as a timeout, just not a fun
+one to hit while trying out the new template.
+
+Fixed with two changes: `maxDuration` for this route is now 300s (Vercel's own default *and*
+maximum on every plan, Hobby included, so this costs nothing extra), and `max_tokens` was
+brought back down to 8000 — still double the original limit and enough for one meeting's worth
+of genuinely detailed notes (~6000 words), while keeping the realistic worst-case generation
+time well under two minutes instead of flirting with the timeout ceiling.
+
+Source: [Vercel Functions Limits — Max duration](https://vercel.com/docs/functions/limitations#max-duration).
 
 ## Known limitations, worth knowing about
 

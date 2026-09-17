@@ -1,9 +1,14 @@
 import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
-// Vercel's own default is 300s on every plan (Hobby included), so this just
-// gives real headroom for a slow Claude response without costing anything.
-export const maxDuration = 90;
+// Vercel's own default AND maximum on every plan (Hobby included) is already 300s, so
+// using the full 300s here costs nothing extra. This was previously capped at 90s, which
+// wasn't enough headroom for a single non-streaming Claude call producing a genuinely
+// long, detailed report (like the white-paper template) at max_tokens: 16000 -- that
+// combination could take longer than 90s to finish, which Vercel then reports as a 504
+// FUNCTION_INVOCATION_TIMEOUT (surfaced in the app as "The request took too long and
+// timed out.").
+export const maxDuration = 300;
 
 const SYSTEM_PROMPT =
   "You are an expert note-taker who writes clear, accurate reports strictly from the " +
@@ -85,10 +90,15 @@ export async function POST(req: Request) {
       body: JSON.stringify({
         model,
         // Some templates (e.g. the white-paper-style ones) ask for a genuinely long,
-        // detailed document -- 4096 was tight enough to truncate those. claude-sonnet-5
-        // supports up to 128K output tokens in a standard request with no special beta
-        // header needed, so this has plenty of headroom without being excessive.
-        max_tokens: 16000,
+        // detailed document -- 4096 was tight enough to truncate those, so this is well
+        // above that. It's deliberately NOT set to Claude's full 128K ceiling, though:
+        // this is one blocking (non-streaming) call, so the actual generation time counts
+        // against maxDuration above. At typical Sonnet throughput (roughly 65 output
+        // tokens/sec), a genuinely maxed-out 16K-token response can take ~4 minutes on its
+        // own -- too close to even a 300s function timeout once real-world variance is
+        // added. 8000 tokens (~6000 words, comfortably enough for one meeting's worth of
+        // detailed notes) keeps the realistic worst case well under two minutes.
+        max_tokens: 8000,
         system: SYSTEM_PROMPT,
         messages: [{ role: "user", content: userContent }],
       }),
