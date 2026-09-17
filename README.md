@@ -27,9 +27,18 @@ new tool.
   which calls Anthropic's Claude API to write the report in Markdown. View the report or the raw
   transcript, copy it, share it (via the OS share sheet on mobile, or clipboard on desktop), or
   download it as a `.md` file.
-- **Templates** — two built in: a **SOAP Meeting Note** (Subjective / Objective / Assessment /
-  Plan — what you asked for) and a more conventional **Business Meeting** template (summary,
-  attendees, decisions, action items, next steps). Add your own in plain English any time.
+- **Templates** — three built in: a **SOAP Meeting Note** (Subjective / Objective / Assessment /
+  Plan), a **Business Meeting** template (summary, attendees, decisions, action items, next
+  steps), and a **Project Plan & A–Z Workflow White Paper** — a long, detailed write-up geared
+  at planning meetings for a system or product (built with a behaviour support / allied health
+  CRM project in mind): it separates what was actually agreed from what was just discussed,
+  walks step-by-step through the full workflow being designed, and lists functional/non-functional
+  requirements, assumptions, risks, and open questions — written so the whole thing can be pasted
+  into a fresh Claude conversation to draft a full product spec from it. **Every template —
+  including the built-in ones — is fully editable**: open it from the Templates screen and edit
+  the name or instructions directly; a built-in template has a "Reset to default wording" option
+  if you want the original text back. "Duplicate as new template" is available on any template
+  too, for making variants without losing the original.
 - **Auto-titling** — once a report is generated, the app asks Claude for a short, specific
   meeting title based on what was actually discussed (e.g. "Q3 Budget Review With Finance
   Team") and renames the recording automatically, replacing the generic timestamp title. You
@@ -77,7 +86,7 @@ git push -u origin main
 3. Before clicking Deploy, open **Environment Variables** and add:
    - `OPENAI_API_KEY` — from <https://platform.openai.com/api-keys>
    - `ANTHROPIC_API_KEY` — from <https://console.anthropic.com>
-   - `CLAUDE_MODEL` (optional) — defaults to `claude-sonnet-4-5-20250929` if you leave it out.
+   - `CLAUDE_MODEL` (optional) — defaults to `claude-sonnet-5` if you leave it out.
      Model names change over time; if report generation ever fails with a "model not found"
      error, check <https://docs.claude.com> for the current ID and set it here.
    - `AUTH_USERNAME` / `AUTH_PASSWORD` (optional) — override the default `korevia` / `korevia`
@@ -139,6 +148,21 @@ Two changes fix this:
 
 Sources: [Vercel Functions Limits](https://vercel.com/docs/functions/limitations) (request body
 size), [FUNCTION_PAYLOAD_TOO_LARGE](https://vercel.com/docs/errors/function_payload_too_large).
+
+### Changed: default Claude model, and a longer report length limit
+
+Two related changes worth knowing about, found while adding the white-paper template:
+
+- The default report-writing model was `claude-sonnet-4-5-20250929`, which is on Anthropic's
+  deprecation path with a tentative API retirement date "not sooner than 2026-09-29" — close
+  enough that it was worth switching proactively. The default is now `claude-sonnet-5`, the
+  current flagship Sonnet model. If you never set `CLAUDE_MODEL` in Vercel, this update alone
+  fixes it on your next redeploy. If you *did* set `CLAUDE_MODEL` explicitly to the old value,
+  update or remove it.
+- The report length cap (`max_tokens`) was 4096, tight enough to risk truncating a genuinely
+  detailed report (like the new white paper template). It's now 16000 — `claude-sonnet-5`
+  supports up to 128K output tokens in a standard request, no special configuration needed, so
+  this has plenty of headroom without being wasteful.
 
 ## Known limitations, worth knowing about
 

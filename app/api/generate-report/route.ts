@@ -14,7 +14,11 @@ const SYSTEM_PROMPT =
   "what was actually discussed — e.g. 'TITLE: Q3 Budget Review With Finance Team'), then a " +
   "line containing only '---', then the full report in Markdown.";
 
-const DEFAULT_MODEL = "claude-sonnet-4-5-20250929";
+// claude-sonnet-4-5-20250929 (the previous default here) is on Anthropic's deprecation
+// path with a tentative API retirement no sooner than 2026-09-29 -- claude-sonnet-5 is
+// the current flagship Sonnet model and a stable (non-dated) alias, so it's used as the
+// default instead. Override with CLAUDE_MODEL if you want to pin a specific model.
+const DEFAULT_MODEL = "claude-sonnet-5";
 
 function extractAnthropicError(body: string): string {
   try {
@@ -80,7 +84,11 @@ export async function POST(req: Request) {
       },
       body: JSON.stringify({
         model,
-        max_tokens: 4096,
+        // Some templates (e.g. the white-paper-style ones) ask for a genuinely long,
+        // detailed document -- 4096 was tight enough to truncate those. claude-sonnet-5
+        // supports up to 128K output tokens in a standard request with no special beta
+        // header needed, so this has plenty of headroom without being excessive.
+        max_tokens: 16000,
         system: SYSTEM_PROMPT,
         messages: [{ role: "user", content: userContent }],
       }),

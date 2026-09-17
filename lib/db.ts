@@ -97,6 +97,7 @@ export async function getSegments(recordingId: string): Promise<RecordingSegment
 
 const SOAP_TEMPLATE_ID = "builtin-soap-meeting";
 const BUSINESS_TEMPLATE_ID = "builtin-business-meeting";
+const PROJECT_WORKFLOW_TEMPLATE_ID = "builtin-project-workflow-whitepaper";
 
 export function builtInTemplates(): Template[] {
   return [
@@ -157,6 +158,103 @@ A short bullet list of what happens next.
 
 Only use information that is actually present in the transcript. Do not invent names, dates,
 numbers, or commitments.`,
+    },
+    {
+      id: PROJECT_WORKFLOW_TEMPLATE_ID,
+      isBuiltIn: true,
+      name: "Project Plan & A–Z Workflow White Paper",
+      instructions: `Write a long, thorough white paper from the transcript below, documenting a
+planning meeting about a CRM system for behaviour support / allied health service delivery. The
+goal is a self-contained reference document detailed and precise enough that it can be pasted
+into a fresh conversation with an AI assistant to draft a full product specification from it —
+so completeness and precision matter far more than brevity here. Favor including a specific
+detail over summarizing it away. Use Markdown, with exactly these sections, in this order:
+
+## Executive Summary
+3-5 sentences: what this meeting covered, what was decided, and the overall direction of the
+CRM project.
+
+## Project Context & Background
+Why this CRM is needed, what problem it solves, and anything said about the current process,
+tools, or pain points it's replacing.
+
+## Stakeholders & Roles
+A bullet list of every person, role, or organisation type mentioned as involved or affected
+(e.g. clinicians, behaviour support practitioners, allied health providers, support workers,
+participants/clients, families or guardians, referrers, funding bodies, admin or management
+staff) — only what's actually named or described.
+
+## Objectives & Success Criteria
+What the CRM is meant to achieve, and how success will be judged, if stated.
+
+## Agreed Decisions
+A clearly marked bullet list of everything that was explicitly confirmed or agreed in the
+meeting. This is the most important section for accuracy — only include something here if it
+was actually settled, not merely floated.
+
+## Proposed / Under Discussion
+Ideas, features, or approaches that came up but were NOT confirmed as decided — keep this
+strictly separate from "Agreed Decisions" above so the two are never confused.
+
+## Open Questions & Unresolved Items
+Anything left undecided that still needs an answer before the project can move forward.
+
+## End-to-End (A–Z) Workflow
+The heart of this document: a numbered, chronological walkthrough of the full workflow through
+the CRM as discussed — e.g. referral/intake, assessment, support or care plan development,
+service delivery and session/case notes, progress and goal tracking, incident or risk reporting,
+billing/claims, compliance and reporting, case closure — but only include stages that were
+actually discussed, in the order and detail the meeting covered them. For EACH step, use this
+format:
+
+### Step N: [Step name]
+- **Trigger:** what starts this step
+- **Actor(s):** who is involved
+- **Actions:** what happens / what the CRM does or shows
+- **Data captured or updated:** what information is recorded
+- **Output / handoff:** what happens next, and who or what it goes to
+
+If the meeting didn't cover the workflow in this much granular detail for a given step, note
+that plainly (e.g. "Not covered in detail in this meeting") rather than inventing plausible
+steps to fill the gap.
+
+## Functional Requirements
+Every specific feature, module, or capability requested, grouped under sensible headings (for
+example Client & Case Management, Scheduling, Documentation & Case Notes, Goal & Outcome
+Tracking, Incident & Risk Management, Billing / Claims, Compliance & Consent, Reporting &
+Analytics, Communications, Integrations) — only group headings that actually apply to what was
+discussed.
+
+## Non-Functional Requirements & Constraints
+Anything said about privacy/compliance (e.g. health data handling, funding-body compliance such
+as NDIS if mentioned), security, data retention, integrations with existing systems, performance,
+or accessibility.
+
+## Assumptions
+Anything the discussion seemed to take for granted rather than explicitly state.
+
+## Risks & Dependencies
+Anything flagged as a risk, blocker, or dependency on another team, system, or decision.
+
+## Out of Scope
+Anything explicitly ruled out or deferred, if stated.
+
+## Glossary
+A short list defining any domain-specific terms, acronyms, or system names used in the meeting
+(e.g. funding scheme names, clinical or sector-specific terminology), in plain language, based
+only on how they were used in context.
+
+## Recommended Next Steps
+A bullet list of what should happen next.
+
+## Open Items for the Product Spec
+A bullet list, separate from "Open Questions" above, specifically framed as: what a product
+spec author still needs to pin down before writing a full specification from this white paper.
+
+Throughout, write in full sentences and clearly labelled detail rather than terse fragments.
+Only use information that is actually present in the transcript — never invent names, features,
+workflow steps, numbers, or decisions. Where a section has nothing to report, say so explicitly
+(e.g. "Not discussed in this meeting") instead of leaving it blank or guessing.`,
     },
   ];
 }

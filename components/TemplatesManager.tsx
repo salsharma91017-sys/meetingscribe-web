@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { listTemplates, saveTemplate, deleteTemplate } from "@/lib/db";
+import { listTemplates, saveTemplate, deleteTemplate, builtInTemplates } from "@/lib/db";
 import { Template } from "@/lib/types";
 import { PlusIcon } from "./icons";
 import BrandHeader from "./BrandHeader";
@@ -92,13 +92,17 @@ function TemplateEditor({
   const [instructions, setInstructions] = useState(initial?.instructions ?? "");
   const isBuiltIn = initial?.isBuiltIn === true;
 
+  // All templates -- built-in or custom -- are editable and saved in place. A built-in
+  // template's id is well-known (see lib/db.ts), so once it's saved here it's just a
+  // regular row in storage from then on and won't be reset by the app's built-in seeding
+  // logic (that only ever fills in a built-in template that's missing entirely).
   async function handleSave() {
     if (!name.trim() || !instructions.trim()) return;
     await saveTemplate({
-      id: initial && !isBuiltIn ? initial.id : crypto.randomUUID(),
+      id: initial ? initial.id : crypto.randomUUID(),
       name: name.trim(),
       instructions: instructions.trim(),
-      isBuiltIn: false,
+      isBuiltIn,
     });
     onSaved();
   }
@@ -121,18 +125,33 @@ function TemplateEditor({
     onSaved();
   }
 
+  async function handleResetToDefault() {
+    if (!initial || !isBuiltIn) return;
+    const original = builtInTemplates().find((t) => t.id === initial.id);
+    if (!original) return;
+    if (!confirm(`Discard your edits and restore "${original.name}" to its original wording?`)) return;
+    await saveTemplate(original);
+    onSaved();
+  }
+
   return (
     <div className="min-h-screen flex flex-col bg-grid">
       <BrandHeader title={initial ? initial.name : "New template"} onBack={onCancel} />
 
       <main className="flex-1 px-4 pt-6 max-w-2xl mx-auto w-full flex flex-col gap-4">
+        {isBuiltIn && (
+          <p className="text-xs text-slate-500 -mt-1">
+            Built-in template — fully editable. Your changes save in place; use "Reset to
+            default" below if you want the original wording back.
+          </p>
+        )}
+
         <label className="flex flex-col gap-1.5">
           <span className="text-sm font-medium text-slate-300">Template name</span>
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
-            disabled={isBuiltIn}
-            className="bg-ink-800/80 border border-white/10 rounded-lg px-3 py-2 text-slate-100 disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-accent/60 transition"
+            className="bg-ink-800/80 border border-white/10 rounded-lg px-3 py-2 text-slate-100 focus:outline-none focus:ring-2 focus:ring-accent/60 transition"
           />
         </label>
 
@@ -143,25 +162,24 @@ function TemplateEditor({
           <textarea
             value={instructions}
             onChange={(e) => setInstructions(e.target.value)}
-            disabled={isBuiltIn}
             rows={14}
-            className="bg-ink-800/80 border border-white/10 rounded-lg px-3 py-2 font-mono text-sm text-slate-100 disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-accent/60 transition"
+            className="bg-ink-800/80 border border-white/10 rounded-lg px-3 py-2 font-mono text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-accent/60 transition"
           />
         </label>
 
-        {isBuiltIn && (
+        {initial && (
           <button
             onClick={handleDuplicate}
-            className="bg-brand-gradient text-white rounded-lg py-2.5 font-medium hover:brightness-110 transition shadow-glow-blue"
+            className="border border-white/15 text-slate-200 rounded-lg py-2.5 font-medium hover:bg-white/5 transition"
           >
-            Duplicate as custom template
+            Duplicate as new template
           </button>
         )}
       </main>
 
-      {!isBuiltIn && (
-        <div className="p-4 flex gap-3 max-w-2xl mx-auto w-full">
-          {initial && (
+      <div className="p-4 flex flex-col gap-3 max-w-2xl mx-auto w-full">
+        <div className="flex gap-3">
+          {initial && !isBuiltIn && (
             <button
               onClick={handleDelete}
               className="flex-1 border border-red-500/40 text-red-400 rounded-lg py-2.5 font-medium hover:bg-red-500/10 transition"
@@ -176,7 +194,15 @@ function TemplateEditor({
             Save
           </button>
         </div>
-      )}
+        {isBuiltIn && (
+          <button
+            onClick={handleResetToDefault}
+            className="text-xs text-slate-500 hover:text-slate-300 py-1 transition"
+          >
+            Reset to default wording
+          </button>
+        )}
+      </div>
     </div>
   );
 }
