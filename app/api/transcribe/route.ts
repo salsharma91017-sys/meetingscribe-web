@@ -3,7 +3,9 @@ import { NextResponse } from "next/server";
 // Node runtime (not edge): we need FormData/Buffer handling and a longer
 // execution budget than the edge runtime typically allows.
 export const runtime = "nodejs";
-export const maxDuration = 60;
+// Vercel's own default is 300s on every plan (Hobby included), so this just
+// gives real headroom for a slow Whisper response without costing anything.
+export const maxDuration = 120;
 
 function extractOpenAiError(body: string): string {
   try {

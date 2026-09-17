@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
-export const maxDuration = 60;
+// Vercel's own default is 300s on every plan (Hobby included), so this just
+// gives real headroom for a slow Claude response without costing anything.
+export const maxDuration = 90;
 
 const SYSTEM_PROMPT =
   "You are an expert note-taker who writes clear, accurate reports strictly from the " +

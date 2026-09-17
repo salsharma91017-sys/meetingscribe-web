@@ -11,6 +11,7 @@ import {
 import { RecordingMeta, RecordingSegment, Template } from "@/lib/types";
 import { formatElapsed } from "@/lib/format";
 import { renderMarkdown } from "@/lib/markdown";
+import { readJsonResponse } from "@/lib/apiResponse";
 import {
   ChevronLeftIcon,
   ChevronRightIcon,
@@ -146,12 +147,28 @@ export default function RecordingDetail({
           : segment.mimeType.includes("ogg")
           ? "ogg"
           : "webm";
+        // Vercel rejects any request body over 4.5MB before the app's own code
+        // even runs, returning a non-JSON platform error page. Catch an
+        // oversized segment here (should be rare given how SegmentedRecorder is
+        // tuned, but browsers vary) with a clear message instead of sending an
+        // upload that's guaranteed to fail confusingly.
+        if (segment.blob.size > 4_300_000) {
+          throw new Error(
+            `Part ${i + 1} of this recording is too large to upload (${(segment.blob.size / 1_000_000).toFixed(1)}MB, over the 4.5MB server limit). This shouldn't happen with recordings made after the latest update -- try re-recording.`
+          );
+        }
+
         const form = new FormData();
         form.append("file", segment.blob, `segment-${i}.${ext}`);
 
         const res = await fetch("/api/transcribe", { method: "POST", body: form });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || `Transcription failed for part ${i + 1}`);
+        let data: { text?: string };
+        try {
+          data = await readJsonResponse(res);
+        } catch (e) {
+          const detail = e instanceof Error ? e.message : "Unknown error";
+          throw new Error(`Transcription failed for part ${i + 1}: ${detail}`);
+        }
         transcriptParts.push(String(data.text ?? ""));
       }
       const transcript = transcriptParts.join("\n\n").trim();
@@ -162,8 +179,13 @@ export default function RecordingDetail({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ transcript, templateInstructions: template.instructions }),
       });
-      const reportData = await reportRes.json();
-      if (!reportRes.ok) throw new Error(reportData.error || "Report generation failed");
+      let reportData: { report?: string; title?: string };
+      try {
+        reportData = await readJsonResponse(reportRes);
+      } catch (e) {
+        const detail = e instanceof Error ? e.message : "Unknown error";
+        throw new Error(`Report generation failed: ${detail}`);
+      }
 
       const generatedTitle =
         typeof reportData.title === "string" && reportData.title.trim()

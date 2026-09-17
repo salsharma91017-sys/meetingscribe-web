@@ -117,6 +117,29 @@ continuous recording, and separately with pause/resume mixed in.
 If you recorded any meetings with the earlier version, only their last segment's audio would
 have made it into the report — worth re-recording anything important that seemed short.
 
+### Fixed: "Something went wrong: Unexpected token 'A' ... is not valid JSON" during transcription
+
+Vercel enforces a hard **4.5MB request body limit** on every plan (Hobby included) — a request
+over that is rejected by Vercel's own gateway, with a plain-text/HTML error page, *before the
+app's code ever runs*. At the previous ~4-minute segment length, a recording's audio could land
+right at that edge depending on the browser's default bitrate, and when a segment tipped over
+the limit, the app tried to parse Vercel's error page as JSON and failed with exactly that
+confusing message.
+
+Two changes fix this:
+
+- Segments are now 3 minutes instead of 4, and are recorded at a fixed, modest bitrate
+  (64kbps — plenty for clear speech transcription), so a segment's upload size stays well under
+  the 4.5MB limit with real headroom to spare.
+- If a segment somehow still comes out oversized, the app now catches that *before* uploading
+  it and shows a clear message, instead of sending a request that Vercel is guaranteed to
+  reject. More generally, every API call now handles a non-JSON response gracefully (this can
+  also happen on a gateway timeout) and shows a plain-language reason instead of a raw parsing
+  error.
+
+Sources: [Vercel Functions Limits](https://vercel.com/docs/functions/limitations) (request body
+size), [FUNCTION_PAYLOAD_TOO_LARGE](https://vercel.com/docs/errors/function_payload_too_large).
+
 ## Known limitations, worth knowing about
 
 - **Storage is per-browser.** Recordings live in that browser's IndexedDB — they won't show up

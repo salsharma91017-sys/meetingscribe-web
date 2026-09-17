@@ -17,9 +17,20 @@ export type RecorderState = "idle" | "recording" | "paused";
 export type SegmentReadyHandler = (blob: Blob, durationMs: number, index: number) => void;
 
 export class SegmentedRecorder {
-  /** How much audio each uploaded chunk covers. Kept short to stay well under
-   *  typical serverless request-body limits regardless of exact bitrate. */
-  static readonly SEGMENT_MS = 4 * 60 * 1000;
+  /** How much audio each uploaded chunk covers. Vercel Functions have a hard
+   *  4.5MB request body limit on every plan -- a request over that is rejected
+   *  by the platform itself before the app's code even runs, which surfaces as a
+   *  confusing non-JSON error. At AUDIO_BITS_PER_SECOND below, 3 minutes of audio
+   *  is ~1.4MB, leaving a big safety margin even if a browser doesn't fully honor
+   *  the bitrate hint. */
+  static readonly SEGMENT_MS = 3 * 60 * 1000;
+
+  /** Bitrate requested from MediaRecorder. Whisper transcribes speech reliably at
+   *  well under typical "music quality" bitrates, so this trades inaudible fidelity
+   *  loss for a much smaller upload (keeps segments safely under Vercel's 4.5MB
+   *  request body limit -- see SEGMENT_MS above). Not all browsers honor this
+   *  hint exactly, which is why SEGMENT_MS also leaves headroom. */
+  static readonly AUDIO_BITS_PER_SECOND = 64_000;
 
   private stream: MediaStream | null = null;
   private mimeType = "";
@@ -126,7 +137,10 @@ export class SegmentedRecorder {
 
   private beginSegment(): void {
     if (!this.stream) return;
-    const options = this.mimeType ? { mimeType: this.mimeType } : undefined;
+    const options: MediaRecorderOptions = {
+      audioBitsPerSecond: SegmentedRecorder.AUDIO_BITS_PER_SECOND,
+    };
+    if (this.mimeType) options.mimeType = this.mimeType;
     const recorder = new MediaRecorder(this.stream, options);
     const chunks: BlobPart[] = [];
 
