@@ -167,6 +167,14 @@ export class SegmentedRecorder {
         this.currentRecorder &&
         this.currentRecorder.state === "recording"
       ) {
+        // Same bookkeeping pause()/stop() do: fold the time since this segment
+        // started into segmentAccumulatedMs *before* stopping the recorder. Without
+        // this, onstop sees segmentAccumulatedMs still at 0 (it's never touched during
+        // plain continuous recording), so the segment gets its duration recorded as
+        // 0 -- which drops the whole segment's audio (the `durationMs > 0` guard in
+        // onstop below rejects it) and makes the visible elapsed-time counter jump
+        // back down to ~0 right as the next segment starts.
+        this.segmentAccumulatedMs += performance.now() - this.segmentStartedAt;
         this.currentRecorder.stop();
       }
     }, delayMs);

@@ -102,6 +102,21 @@ Open <http://localhost:3000>. Recording needs microphone access, which browsers 
 `localhost` or `https://` — this works for local dev and for the deployed Vercel URL, just not
 over plain `http://` on a different machine.
 
+### Fixed: long recordings losing audio at each ~4-minute mark
+
+An earlier version of `lib/audio.ts` had a bug where the automatic segment rotation (the thing
+that splits a long recording into ~4-minute chunks behind the scenes) stopped the recorder
+without first recording how much time had actually elapsed. That made every segment except the
+final one get logged as 0 seconds long, so it was silently discarded — meaning only the last
+few minutes of a long meeting actually made it into the transcript — and the on-screen timer
+visibly dropped back to ~0:00 every ~4 minutes, making it look like the recording had restarted.
+This is now fixed: the timer counts up continuously for the whole recording, and every segment
+is captured and included. Verified with an isolated timing test simulating 10+ minutes of
+continuous recording, and separately with pause/resume mixed in.
+
+If you recorded any meetings with the earlier version, only their last segment's audio would
+have made it into the report — worth re-recording anything important that seemed short.
+
 ## Known limitations, worth knowing about
 
 - **Storage is per-browser.** Recordings live in that browser's IndexedDB — they won't show up
