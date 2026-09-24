@@ -43,6 +43,7 @@ export default function RecordingDetail({
   const [processingStatus, setProcessingStatus] = useState("");
   const [showTemplatePicker, setShowTemplatePicker] = useState(false);
   const [templates, setTemplates] = useState<Template[]>([]);
+  const [forceRetranscribe, setForceRetranscribe] = useState(false);
 
   const audioRef = useRef<HTMLAudioElement>(null);
   const objectUrlRef = useRef<string | null>(null);
@@ -135,43 +136,63 @@ export default function RecordingDetail({
     if (!meta) return;
     setShowTemplatePicker(false);
     setProcessing(true);
-    setProcessingStatus(segments.length > 0 ? `Transcribing part 1 of ${segments.length}…` : "Transcribing…");
+
+    // If this recording already has a transcript (e.g. you're trying a different
+    // template, or regenerating after a failed report), reuse it instead of
+    // re-transcribing the audio from scratch every time -- that's slower, costs an
+    // OpenAI call per segment for no reason, and is exactly what's skipped here unless
+    // you explicitly asked to re-transcribe.
+    const reuseExistingTranscript = Boolean(meta.transcript && meta.transcript.trim()) && !forceRetranscribe;
+    setForceRetranscribe(false);
+
+    setProcessingStatus(
+      reuseExistingTranscript
+        ? "Using existing transcript…"
+        : segments.length > 0
+        ? `Transcribing part 1 of ${segments.length}…`
+        : "Transcribing…"
+    );
 
     try {
-      const transcriptParts: string[] = [];
-      for (let i = 0; i < segments.length; i++) {
-        setProcessingStatus(`Transcribing part ${i + 1} of ${segments.length}…`);
-        const segment = segments[i];
-        const ext = segment.mimeType.includes("mp4")
-          ? "mp4"
-          : segment.mimeType.includes("ogg")
-          ? "ogg"
-          : "webm";
-        // Vercel rejects any request body over 4.5MB before the app's own code
-        // even runs, returning a non-JSON platform error page. Catch an
-        // oversized segment here (should be rare given how SegmentedRecorder is
-        // tuned, but browsers vary) with a clear message instead of sending an
-        // upload that's guaranteed to fail confusingly.
-        if (segment.blob.size > 4_300_000) {
-          throw new Error(
-            `Part ${i + 1} of this recording is too large to upload (${(segment.blob.size / 1_000_000).toFixed(1)}MB, over the 4.5MB server limit). This shouldn't happen with recordings made after the latest update -- try re-recording.`
-          );
-        }
+      let transcript: string;
+      if (reuseExistingTranscript) {
+        transcript = meta.transcript!.trim();
+      } else {
+        const transcriptParts: string[] = [];
+        for (let i = 0; i < segments.length; i++) {
+          setProcessingStatus(`Transcribing part ${i + 1} of ${segments.length}…`);
+          const segment = segments[i];
+          const ext = segment.mimeType.includes("mp4")
+            ? "mp4"
+            : segment.mimeType.includes("ogg")
+            ? "ogg"
+            : "webm";
+          // Vercel rejects any request body over 4.5MB before the app's own code
+          // even runs, returning a non-JSON platform error page. Catch an
+          // oversized segment here (should be rare given how SegmentedRecorder is
+          // tuned, but browsers vary) with a clear message instead of sending an
+          // upload that's guaranteed to fail confusingly.
+          if (segment.blob.size > 4_300_000) {
+            throw new Error(
+              `Part ${i + 1} of this recording is too large to upload (${(segment.blob.size / 1_000_000).toFixed(1)}MB, over the 4.5MB server limit). This shouldn't happen with recordings made after the latest update -- try re-recording.`
+            );
+          }
 
-        const form = new FormData();
-        form.append("file", segment.blob, `segment-${i}.${ext}`);
+          const form = new FormData();
+          form.append("file", segment.blob, `segment-${i}.${ext}`);
 
-        const res = await fetch("/api/transcribe", { method: "POST", body: form });
-        let data: { text?: string };
-        try {
-          data = await readJsonResponse(res);
-        } catch (e) {
-          const detail = e instanceof Error ? e.message : "Unknown error";
-          throw new Error(`Transcription failed for part ${i + 1}: ${detail}`);
+          const res = await fetch("/api/transcribe", { method: "POST", body: form });
+          let data: { text?: string };
+          try {
+            data = await readJsonResponse(res);
+          } catch (e) {
+            const detail = e instanceof Error ? e.message : "Unknown error";
+            throw new Error(`Transcription failed for part ${i + 1}: ${detail}`);
+          }
+          transcriptParts.push(String(data.text ?? ""));
         }
-        transcriptParts.push(String(data.text ?? ""));
+        transcript = transcriptParts.join("\n\n").trim();
       }
-      const transcript = transcriptParts.join("\n\n").trim();
 
       setProcessingStatus("Writing report…");
       const reportRes = await fetch("/api/generate-report", {
@@ -455,6 +476,22 @@ export default function RecordingDetail({
                 </li>
               ))}
             </ul>
+
+            {meta.transcript && meta.transcript.trim() && (
+              <label className="flex items-start gap-2 mt-3 px-1 text-xs text-slate-400 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={forceRetranscribe}
+                  onChange={(e) => setForceRetranscribe(e.target.checked)}
+                  className="mt-0.5 accent-accent"
+                />
+                <span>
+                  Re-transcribe from audio instead of reusing the existing transcript
+                  (slower — only needed if you think the transcript is wrong).
+                </span>
+              </label>
+            )}
+
             <button
               onClick={() => setShowTemplatePicker(false)}
               className="w-full mt-3 text-sm text-slate-500 hover:text-slate-300 py-2 transition"

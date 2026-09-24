@@ -22,23 +22,29 @@ new tool.
   your browser (IndexedDB) — nothing is uploaded until you ask for a report.
 - **Transcribe** — when you tap "Generate report," each segment is uploaded to `/api/transcribe`,
   a serverless function that forwards it to OpenAI's Whisper API and returns the text. The
-  segments are transcribed in order and stitched together.
+  segments are transcribed in order and stitched together. If the recording already has a
+  transcript (you're trying a different template, or regenerating after a failure), that step is
+  skipped and the existing transcript is reused — faster, and doesn't re-spend an OpenAI call per
+  segment for no reason. There's a "Re-transcribe from audio instead" checkbox in the template
+  picker for the rare case you actually want a fresh transcription.
 - **Report** — the full transcript plus your chosen template goes to `/api/generate-report`,
   which calls Anthropic's Claude API to write the report in Markdown. View the report or the raw
   transcript, copy it, share it (via the OS share sheet on mobile, or clipboard on desktop), or
   download it as a `.md` file.
-- **Templates** — three built in: a **SOAP Meeting Note** (Subjective / Objective / Assessment /
+- **Templates** — four built in: a **SOAP Meeting Note** (Subjective / Objective / Assessment /
   Plan), a **Business Meeting** template (summary, attendees, decisions, action items, next
-  steps), and a **Project Plan & A–Z Workflow White Paper** — a long, detailed write-up geared
-  at planning meetings for a system or product (built with a behaviour support / allied health
-  CRM project in mind): it separates what was actually agreed from what was just discussed,
-  walks step-by-step through the full workflow being designed, and lists functional/non-functional
+  steps), a **Project Plan & A–Z Workflow White Paper** — a long, detailed write-up geared at
+  planning meetings for a system or product (built with a behaviour support / allied health CRM
+  project in mind): it separates what was actually agreed from what was just discussed, walks
+  step-by-step through the full workflow being designed, and lists functional/non-functional
   requirements, assumptions, risks, and open questions — written so the whole thing can be pasted
-  into a fresh Claude conversation to draft a full product spec from it. **Every template —
-  including the built-in ones — is fully editable**: open it from the Templates screen and edit
-  the name or instructions directly; a built-in template has a "Reset to default wording" option
-  if you want the original text back. "Duplicate as new template" is available on any template
-  too, for making variants without losing the original.
+  into a fresh Claude conversation to draft a full product spec from it — and a **CoVet-Style
+  Meeting Summary**, modeled on a sample report format (Meeting Details with date/time/attendees,
+  Discussion Topics broken into per-topic sub-sections with supporting sub-points, and Action
+  Items). **Every template — including the built-in ones — is fully editable**: open it from the
+  Templates screen and edit the name or instructions directly; a built-in template has a "Reset
+  to default wording" option if you want the original text back. "Duplicate as new template" is
+  available on any template too, for making variants without losing the original.
 - **Auto-titling** — once a report is generated, the app asks Claude for a short, specific
   meeting title based on what was actually discussed (e.g. "Q3 Budget Review With Finance
   Team") and renames the recording automatically, replacing the generic timestamp title. You
@@ -177,7 +183,33 @@ brought back down to 8000 — still double the original limit and enough for one
 of genuinely detailed notes (~6000 words), while keeping the realistic worst-case generation
 time well under two minutes instead of flirting with the timeout ceiling.
 
+### Added: reusing an existing transcript instead of re-transcribing every time
+
+Every "Generate report" click re-uploaded and re-transcribed every audio segment from scratch,
+even when regenerating a report you'd already successfully transcribed once (e.g. trying a
+different template). That's slower, spends an OpenAI Whisper call per segment for no reason, and
+adds extra round-trips that can each go wrong. Generating a report now skips the transcription
+step entirely when the recording already has a transcript, and writes the report directly from
+it. A "Re-transcribe from audio instead" checkbox appears in the template picker for the rare
+case you actually want a fresh transcription (e.g. you think the existing one is wrong).
+
 Source: [Vercel Functions Limits — Max duration](https://vercel.com/docs/functions/limitations#max-duration).
+
+### Added: the CoVet-Style Meeting Summary template, and topic sub-headings / nested bullets
+
+Added a fourth built-in template matching a sample "CoVet"-style meeting summary format:
+Meeting Details (topic, date, time, attendees), Discussion Topics broken into a sub-heading per
+topic with supporting bullet points (and a nested sub-bullet where a point has its own
+supporting detail), and Action Items.
+
+That format needed two things the report viewer's small hand-written Markdown renderer
+(`lib/markdown.ts`) didn't support yet: a sub-heading level distinct from the main section
+headings (`###`, rendered plainer than `##` so "one topic within Discussion Topics" reads
+differently from "a whole section"), and one level of nested bullets (a `- ` line indented under
+another becomes a sub-list of that bullet, instead of being flattened into the same list).
+Upgraded the renderer to support both — verified it still renders the existing templates
+(flat headings and bullets, no nesting) exactly as before, and that the new nesting/sub-heading
+behavior works as expected, before rebuilding.
 
 ## Known limitations, worth knowing about
 

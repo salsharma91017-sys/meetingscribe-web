@@ -98,6 +98,7 @@ export async function getSegments(recordingId: string): Promise<RecordingSegment
 const SOAP_TEMPLATE_ID = "builtin-soap-meeting";
 const BUSINESS_TEMPLATE_ID = "builtin-business-meeting";
 const PROJECT_WORKFLOW_TEMPLATE_ID = "builtin-project-workflow-whitepaper";
+const COVET_STYLE_TEMPLATE_ID = "builtin-covet-style-summary";
 
 export function builtInTemplates(): Template[] {
   return [
@@ -255,6 +256,57 @@ Throughout, write in full sentences and clearly labelled detail rather than ters
 Only use information that is actually present in the transcript — never invent names, features,
 workflow steps, numbers, or decisions. Where a section has nothing to report, say so explicitly
 (e.g. "Not discussed in this meeting") instead of leaving it blank or guessing.`,
+    },
+    {
+      id: COVET_STYLE_TEMPLATE_ID,
+      isBuiltIn: true,
+      name: "CoVet-Style Meeting Summary",
+      instructions: `Write a meeting summary from the transcript below, in Markdown, using
+exactly this structure and in this order:
+
+## Meeting Details
+Start with one bold line naming what the meeting was about, in the form
+"**Discussion on [topic]**".
+
+Then a short bullet list with only the lines that apply (omit either one entirely if the
+transcript doesn't give you that detail -- never guess a date or time):
+- **Date:** [the date, if stated in the transcript]
+- **Time:** [the time, if stated]
+
+Then, on its own line, write **Attending:** followed by a bullet list of who was there:
+- [Name, with title or role if it was stated]
+- [Name, with title or role if it was stated]
+
+If someone expected was absent, or left early, or joined late, add one short plain sentence
+noting who and why immediately after the attendee list, only if that was actually mentioned
+(for example: "Mike was unable to attend as his flight was cancelled.").
+
+## Discussion Topics
+Break the discussion up into topics in the order they came up, and for EACH topic write a
+level-3 heading naming it, followed by a bullet list of what was said, asked, or decided about
+it. Keep bullets specific and close to what was actually said rather than compressed into vague
+generalities -- capture names, numbers, product/company names, and direct claims people made.
+Use a nested bullet (indent it two spaces under its parent bullet) when a point is really a
+supporting detail or sub-item of the bullet above it, rather than its own separate point -- for
+example a short list of specific features belonging to one broader point.
+
+### [Topic name]
+- [what was said or decided]
+- [what was said or decided]
+  - [a supporting detail or sub-item of the point directly above, if there is one]
+
+### [Next topic name]
+- [what was said or decided]
+
+## Action Items
+A bullet list of concrete action items in the form "Action — Owner (if stated) — Due date (if
+stated)". If no action items came up, write "No action items were recorded." instead of leaving
+the section empty.
+
+Only use information that is actually present in the transcript. Do not invent names, dates,
+company names, or commitments. If the transcript doesn't give you something this format expects
+(for example, no one stated the date or time), just omit that specific line rather than
+guessing or writing a placeholder.`,
     },
   ];
 }
