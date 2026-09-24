@@ -223,16 +223,20 @@ topic-dense one, and once Claude hits that ceiling it simply stops where it is; 
 timeout or an error, so nothing was reported.
 
 Fixed by detecting this case (the API response's `stop_reason` is `"max_tokens"`) and making one
-automatic continuation call: it "prefills" Claude's own partial answer as the last message and
-asks it to keep going, so the continuation picks up exactly where generation stopped — no
-repeated or re-summarized content. This roughly doubles the effective ceiling to ~14000 tokens
-(~10,500 words) for one report. It's capped at a single continuation round (not more) to stay
-within the same 300-second function budget: at typical Sonnet throughput, two calls' worth of
-generation is already a meaningful chunk of that budget, and a third call would risk trading this
-problem for the earlier 504 timeout one. If a report is still cut off after the automatic
-continuation, it now says so explicitly at the end of the report text (instead of just stopping),
-and suggests regenerating, splitting the meeting into shorter recordings, or using a shorter/less
-detailed template.
+automatic continuation call: it sends Claude's own partial answer back as an assistant turn,
+followed by an explicit instruction to continue from exactly that point with no repeated or
+re-summarized content. (The more direct approach — "prefilling" the partial answer as the very
+last message so the API just continues that same turn — isn't supported on `claude-sonnet-5`:
+it returns "This model does not support assistant message prefill. The conversation must end
+with a user message." So this uses the same idea via an extra explicit turn instead, which works
+on any model.) This roughly doubles the effective ceiling to ~14000 tokens (~10,500 words) for
+one report. It's capped at a single continuation round (not more) to stay within the same
+300-second function budget: at typical Sonnet throughput, two calls' worth of generation is
+already a meaningful chunk of that budget, and a third call would risk trading this problem for
+the earlier 504 timeout one. If a report is still cut off after the automatic continuation, it
+now says so explicitly at the end of the report text (instead of just stopping), and suggests
+regenerating, splitting the meeting into shorter recordings, or using a shorter/less detailed
+template.
 
 ## Known limitations, worth knowing about
 

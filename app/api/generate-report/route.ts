@@ -135,9 +135,15 @@ export async function POST(req: Request) {
   // cap mid-report (stop_reason: "max_tokens"), the response would previously just be cut
   // off mid-sentence with no error at all, which is confusing (it looks like the report
   // "finished" but is actually incomplete). Instead, when that happens, this makes up to
-  // MAX_CONTINUATIONS follow-up calls that prefill the model's own partial answer as the
-  // last "assistant" message -- the API then continues generating from exactly that point,
-  // so the continuation is stitched on with no repeated or re-summarized content.
+  // MAX_CONTINUATIONS follow-up calls asking Claude to continue from where it stopped.
+  //
+  // The natural way to do this is "assistant message prefill" (send the partial answer back
+  // as the last message with role "assistant", so the API just continues that exact turn).
+  // claude-sonnet-5 doesn't support that ("This model does not support assistant message
+  // prefill. The conversation must end with a user message."), so instead the partial answer
+  // is sent back as an assistant turn followed by an explicit user turn asking it to continue
+  // from exactly that point with no repeated or re-summarized content -- slightly less
+  // guaranteed seamless than true prefill, but works with any model.
   //
   // Token/time budget: this route is one blocking sequence of calls, so all of their
   // generation time counts against maxDuration (300s) above. At typical Sonnet throughput
@@ -150,6 +156,12 @@ export async function POST(req: Request) {
   const INITIAL_MAX_TOKENS = 8000;
   const CONTINUATION_MAX_TOKENS = 6000;
   const MAX_CONTINUATIONS = 1;
+  const CONTINUE_INSTRUCTION =
+    "Your previous response was cut off before it was finished. Continue writing from " +
+    "exactly where you left off. Do not repeat anything you already wrote, do not " +
+    "re-summarize, do not restate the TITLE line or the '---' separator, and do not add any " +
+    "preamble like 'Continuing...' -- just resume the Markdown report text, starting with " +
+    "whatever character would naturally come next.";
 
   try {
     let full = "";
@@ -163,6 +175,7 @@ export async function POST(req: Request) {
           : [
               { role: "user", content: userContent },
               { role: "assistant", content: full },
+              { role: "user", content: CONTINUE_INSTRUCTION },
             ];
       const maxTokens = continuations === 0 ? INITIAL_MAX_TOKENS : CONTINUATION_MAX_TOKENS;
 
