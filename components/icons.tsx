@@ -93,6 +93,14 @@ export function DownloadIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
+export function PdfIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <Base {...props}>
+      <path d="M14,2H6C4.9,2 4,2.9 4,4v16c0,1.1 0.9,2 2,2h12c1.1,0 2,-0.9 2,-2V8L14,2z M13,9V3.5L18.5,9H13z M8.5,14.5h1.25c0.83,0 1.5,-0.67 1.5,-1.5s-0.67,-1.5 -1.5,-1.5H7.5v6h1v-1.5H8.5z M8.5,12.5h1.25c0.28,0 0.5,0.22 0.5,0.5s-0.22,0.5 -0.5,0.5H8.5V12.5z M13,17.5h1.5c0.83,0 1.5,-0.67 1.5,-1.5v-2c0,-0.83 -0.67,-1.5 -1.5,-1.5H13V17.5z M14,12.5c0.28,0 0.5,0.22 0.5,0.5v2c0,0.28 -0.22,0.5 -0.5,0.5h-0.5v-3H14z M16.5,12.5H18v-1h-2.5v6h1v-2h1.25v-1H16.5V12.5z" />
+    </Base>
+  );
+}
+
 export function ChevronLeftIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <Base {...props}>

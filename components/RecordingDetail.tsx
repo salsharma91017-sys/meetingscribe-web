@@ -18,12 +18,22 @@ import {
   CopyIcon,
   DownloadIcon,
   PauseIcon,
+  PdfIcon,
   PlayIcon,
   ShareIcon,
 } from "./icons";
 import BrandHeader from "./BrandHeader";
 
 type Tab = "report" | "transcript";
+
+// Shown on the branded PDF export only (see the hidden "print view" near the bottom of the
+// component and handleExportPdf()) -- kept in the same voice as the "About KoreVia Solutions"
+// blurb on the login page, but focused on MeetingScribe itself.
+const MEETINGSCRIBE_BLURB =
+  "MeetingScribe is KoreVia Solutions' AI-powered meeting companion. It records your " +
+  "conversations, transcribes them automatically, and turns them into clear, structured " +
+  "reports — so nothing important gets lost, and meetings are easier to manage, revisit, " +
+  "and act on.";
 
 export default function RecordingDetail({
   recordingId,
@@ -277,6 +287,22 @@ export default function RecordingDetail({
     URL.revokeObjectURL(url);
   }
 
+  function handleExportPdf() {
+    if (typeof window === "undefined") return;
+    // The browser's own "Save as PDF" print target is used instead of a client-side PDF
+    // library (jsPDF, etc.) -- it produces a real, selectable-text PDF with correct
+    // pagination for free, and needs no extra dependency or server-side rendering step.
+    // The hidden .print-view block below (shown only under the @media print / Tailwind
+    // print: rules) is what actually gets printed; document.title is used as the
+    // filename Chrome/Edge suggest in the save dialog, so it's set to something more
+    // useful than the app's own tab title just for this call.
+    const previousTitle = document.title;
+    const safeTitle = (meta?.title ?? "Meeting").trim();
+    document.title = `${safeTitle} - MeetingScribe Report`;
+    window.print();
+    document.title = previousTitle;
+  }
+
   async function handleRename() {
     if (!meta) return;
     const newTitle = window.prompt("Rename recording", meta.title);
@@ -314,7 +340,12 @@ export default function RecordingDetail({
   const currentSegment = segments[playingIndex];
 
   return (
-    <div className="min-h-screen pb-10 bg-grid">
+    <>
+      {/* print:hidden -- the whole interactive app shell is hidden during the PDF export
+          print pass (handleExportPdf()); the branded print view further below is what
+          actually gets shown/printed instead. Needs its own fragment wrapper since a
+          print:hidden ancestor would also hide that print view if it were nested inside. */}
+      <div className="min-h-screen pb-10 bg-grid print:hidden">
       <BrandHeader
         title={meta.title}
         onBack={onBack}
@@ -455,6 +486,15 @@ export default function RecordingDetail({
                 <DownloadIcon /> Save
               </button>
             </div>
+
+            {meta.reportMarkdown && meta.reportMarkdown.trim() && (
+              <button
+                onClick={handleExportPdf}
+                className="w-full mt-3 border border-white/15 text-slate-200 rounded-lg py-2.5 font-medium hover:bg-white/5 transition flex items-center justify-center gap-2"
+              >
+                <PdfIcon /> Export report as PDF
+              </button>
+            )}
           </>
         )}
       </main>
@@ -501,6 +541,44 @@ export default function RecordingDetail({
           </div>
         </div>
       )}
-    </div>
+      </div>
+
+      {/* Branded "print view" for PDF export -- invisible on screen (Tailwind's `hidden`),
+          shown only for the browser's print/save-as-PDF pass (`print:block`), and NOT the
+          same markup as the on-screen report: it always shows meta.reportMarkdown
+          specifically (regardless of which tab is active) with the KoreVia logo and the
+          MeetingScribe blurb, styled for a printed white page. See handleExportPdf(). Sits
+          outside the print:hidden app-shell div above (as a fragment sibling), since a
+          print:hidden ancestor would hide this too, however this element is styled. */}
+      <div className="hidden print:block bg-white text-black p-2 max-w-3xl mx-auto">
+        <div className="flex items-center gap-3 border-b border-slate-300 pb-4 mb-5">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/korevia-logo.png" alt="KoreVia Solutions" className="w-12 h-12 rounded-lg object-cover" />
+          <div>
+            <div className="text-lg font-bold text-slate-900">
+              KoreVia <span className="font-black">MeetingScribe</span>
+            </div>
+            <div className="text-[11px] text-slate-500">AI-powered meeting reports by KoreVia Solutions</div>
+          </div>
+        </div>
+
+        <p className="text-xs text-slate-600 leading-relaxed italic mb-6">{MEETINGSCRIBE_BLURB}</p>
+
+        <h1 className="text-xl font-bold text-slate-900 mb-1">{meta.title}</h1>
+        <p className="text-xs text-slate-500 mb-6">
+          Recorded {new Date(meta.createdAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}
+          {" · "}Duration {formatElapsed(meta.durationMs)}
+        </p>
+
+        <div
+          className="print-markdown-body text-[13px]"
+          dangerouslySetInnerHTML={{ __html: renderMarkdown(meta.reportMarkdown ?? "No report yet.") }}
+        />
+
+        <div className="mt-10 pt-4 border-t border-slate-200 text-[10px] text-slate-400 text-center">
+          Generated by KoreVia MeetingScribe · korevia.solutions
+        </div>
+      </div>
+    </>
   );
 }

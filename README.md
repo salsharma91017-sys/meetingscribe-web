@@ -238,6 +238,24 @@ now says so explicitly at the end of the report text (instead of just stopping),
 regenerating, splitting the meeting into shorter recordings, or using a shorter/less detailed
 template.
 
+### Added: "Export report as PDF" with KoreVia branding
+
+Once a report exists, a new **Export report as PDF** button appears (below Share/Copy/Save).
+It opens the browser's own print dialog with a "Save as PDF" option, printing a page that's
+completely different from the on-screen dark UI: a KoreVia logo and "MeetingScribe" wordmark at
+the top, a short blurb describing MeetingScribe as KoreVia's AI-powered meeting companion, then
+the meeting title, recorded date and duration, and the full report — styled dark-text-on-white
+for print, with proper heading levels and nested bullets carried over from the same renderer the
+in-app report view uses.
+
+This deliberately uses the browser's native print-to-PDF instead of a PDF-generation library
+(client-side, like jsPDF, or server-side, like Puppeteer): it produces a real PDF with
+selectable text and correct automatic pagination for free, with no extra dependency and no
+server-side rendering step (which would be awkward to run inside a Vercel serverless function
+anyway). The branded page is normally invisible — it's only revealed by a `print:` CSS rule for
+the duration of the print/save dialog — and everything else in the app is hidden the same way,
+so what actually gets saved as a PDF is just the branded report, not the app UI around it.
+
 ## Known limitations, worth knowing about
 
 - **Storage is per-browser.** Recordings live in that browser's IndexedDB — they won't show up
