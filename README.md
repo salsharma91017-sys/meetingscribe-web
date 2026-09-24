@@ -211,6 +211,29 @@ Upgraded the renderer to support both — verified it still renders the existing
 (flat headings and bullets, no nesting) exactly as before, and that the new nesting/sub-heading
 behavior works as expected, before rebuilding.
 
+### Fixed: long/detailed reports silently cutting off mid-sentence
+
+For a long or dense meeting (a multi-hour recording covering many separate topics), the
+generated report could stop abruptly mid-bullet with no error message at all — it looked
+"finished" but wasn't. The cause: `app/api/generate-report/route.ts` asks Claude for at most
+8000 output tokens per call (`max_tokens: 8000`), a limit chosen so a single call couldn't run
+long enough to hit Vercel's 300-second function timeout (see the fix above). That's roughly
+6000 words — comfortably enough for most meetings, but not always enough for a very long or
+topic-dense one, and once Claude hits that ceiling it simply stops where it is; that's not a
+timeout or an error, so nothing was reported.
+
+Fixed by detecting this case (the API response's `stop_reason` is `"max_tokens"`) and making one
+automatic continuation call: it "prefills" Claude's own partial answer as the last message and
+asks it to keep going, so the continuation picks up exactly where generation stopped — no
+repeated or re-summarized content. This roughly doubles the effective ceiling to ~14000 tokens
+(~10,500 words) for one report. It's capped at a single continuation round (not more) to stay
+within the same 300-second function budget: at typical Sonnet throughput, two calls' worth of
+generation is already a meaningful chunk of that budget, and a third call would risk trading this
+problem for the earlier 504 timeout one. If a report is still cut off after the automatic
+continuation, it now says so explicitly at the end of the report text (instead of just stopping),
+and suggests regenerating, splitting the meeting into shorter recordings, or using a shorter/less
+detailed template.
+
 ## Known limitations, worth knowing about
 
 - **Storage is per-browser.** Recordings live in that browser's IndexedDB — they won't show up

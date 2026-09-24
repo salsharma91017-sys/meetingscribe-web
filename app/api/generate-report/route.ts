@@ -39,6 +39,56 @@ interface AnthropicContentBlock {
   text?: string;
 }
 
+interface AnthropicMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
+interface AnthropicCallResult {
+  text: string;
+  stopReason: string | null;
+}
+
+/** One non-streaming call to the Messages API. Throws (with a short, user-facing message)
+ *  on a non-2xx response, matching the error shape the rest of this route already expects. */
+async function callClaude(
+  apiKey: string,
+  model: string,
+  messages: AnthropicMessage[],
+  maxTokens: number
+): Promise<AnthropicCallResult> {
+  const response = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01",
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      model,
+      max_tokens: maxTokens,
+      system: SYSTEM_PROMPT,
+      messages,
+    }),
+  });
+
+  const bodyText = await response.text();
+  if (!response.ok) {
+    throw new Error(extractAnthropicError(bodyText));
+  }
+
+  const json = JSON.parse(bodyText) as {
+    content?: AnthropicContentBlock[];
+    stop_reason?: string | null;
+  };
+  const text = (json.content ?? [])
+    .filter((block) => block.type === "text" && typeof block.text === "string")
+    .map((block) => block.text)
+    .join("");
+
+  return { text, stopReason: json.stop_reason ?? null };
+}
+
 /** Splits the model's "TITLE: ...\n---\n<report>" response into its parts. Falls back to
  *  treating the whole response as the report if the model didn't follow the format. */
 function parseReportResponse(raw: string): { title: string | null; report: string } {
@@ -79,46 +129,61 @@ export async function POST(req: Request) {
   const userContent =
     `${templateInstructions.trim()}\n\n---TRANSCRIPT START---\n${transcript.trim()}\n---TRANSCRIPT END---`;
 
-  try {
-    const response = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        model,
-        // Some templates (e.g. the white-paper-style ones) ask for a genuinely long,
-        // detailed document -- 4096 was tight enough to truncate those, so this is well
-        // above that. It's deliberately NOT set to Claude's full 128K ceiling, though:
-        // this is one blocking (non-streaming) call, so the actual generation time counts
-        // against maxDuration above. At typical Sonnet throughput (roughly 65 output
-        // tokens/sec), a genuinely maxed-out 16K-token response can take ~4 minutes on its
-        // own -- too close to even a 300s function timeout once real-world variance is
-        // added. 8000 tokens (~6000 words, comfortably enough for one meeting's worth of
-        // detailed notes) keeps the realistic worst case well under two minutes.
-        max_tokens: 8000,
-        system: SYSTEM_PROMPT,
-        messages: [{ role: "user", content: userContent }],
-      }),
-    });
+  // Some templates (e.g. the white-paper-style ones, or long/dense meetings like an
+  // hours-long operations review) ask for a genuinely long, detailed document. A single
+  // non-streaming call is capped at INITIAL_MAX_TOKENS output tokens -- if Claude hits that
+  // cap mid-report (stop_reason: "max_tokens"), the response would previously just be cut
+  // off mid-sentence with no error at all, which is confusing (it looks like the report
+  // "finished" but is actually incomplete). Instead, when that happens, this makes up to
+  // MAX_CONTINUATIONS follow-up calls that prefill the model's own partial answer as the
+  // last "assistant" message -- the API then continues generating from exactly that point,
+  // so the continuation is stitched on with no repeated or re-summarized content.
+  //
+  // Token/time budget: this route is one blocking sequence of calls, so all of their
+  // generation time counts against maxDuration (300s) above. At typical Sonnet throughput
+  // (roughly 65 output tokens/sec), INITIAL_MAX_TOKENS (8000) + MAX_CONTINUATIONS *
+  // CONTINUATION_MAX_TOKENS (1 * 6000) = 14000 tokens worst-case is ~215s of generation,
+  // leaving headroom for input processing and network latency across the up-to-2 calls.
+  // Going further (e.g. a 2nd continuation) would push the worst case close to or past the
+  // 300s ceiling and risk trading this truncation problem for the earlier 504 timeout
+  // problem, so it's intentionally limited to one continuation round.
+  const INITIAL_MAX_TOKENS = 8000;
+  const CONTINUATION_MAX_TOKENS = 6000;
+  const MAX_CONTINUATIONS = 1;
 
-    const bodyText = await response.text();
-    if (!response.ok) {
-      return NextResponse.json({ error: extractAnthropicError(bodyText) }, { status: response.status });
+  try {
+    let full = "";
+    let stopReason: string | null = null;
+    let continuations = 0;
+
+    while (true) {
+      const messages: AnthropicMessage[] =
+        continuations === 0
+          ? [{ role: "user", content: userContent }]
+          : [
+              { role: "user", content: userContent },
+              { role: "assistant", content: full },
+            ];
+      const maxTokens = continuations === 0 ? INITIAL_MAX_TOKENS : CONTINUATION_MAX_TOKENS;
+
+      const result = await callClaude(apiKey, model, messages, maxTokens);
+      full += result.text;
+      stopReason = result.stopReason;
+
+      if (stopReason !== "max_tokens" || continuations >= MAX_CONTINUATIONS) break;
+      continuations += 1;
     }
 
-    const json = JSON.parse(bodyText) as { content?: AnthropicContentBlock[] };
-    const text = (json.content ?? [])
-      .filter((block) => block.type === "text" && typeof block.text === "string")
-      .map((block) => block.text)
-      .join("")
-      .trim();
+    let { title, report } = parseReportResponse(full.trim());
 
-    const { title, report } = parseReportResponse(text);
+    if (stopReason === "max_tokens") {
+      report +=
+        "\n\n---\n\n*Note: this report was cut off because it hit the model's maximum " +
+        "output length, even after an automatic continuation. Try regenerating, splitting " +
+        "the meeting into shorter recordings, or using a shorter/less detailed template.*";
+    }
 
-    return NextResponse.json({ report, title });
+    return NextResponse.json({ report, title, truncated: stopReason === "max_tokens" });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown report generation error";
     return NextResponse.json({ error: message }, { status: 500 });
