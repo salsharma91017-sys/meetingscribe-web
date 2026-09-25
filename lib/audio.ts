@@ -16,6 +16,22 @@ export type RecorderState = "idle" | "recording" | "paused";
 
 export type SegmentReadyHandler = (blob: Blob, durationMs: number, index: number) => void;
 
+export interface StartOptions {
+  /** When true, in addition to the microphone, also asks the browser to share a
+   *  tab/window/screen's audio (getDisplayMedia) and mixes it in -- this is what
+   *  makes it possible to record BOTH sides of an online meeting (Zoom/Meet/Teams)
+   *  when you're on earphones, since the other participants' audio only goes to
+   *  your ears otherwise and the microphone alone never picks it up. See the
+   *  README's "Recording an online meeting" section for what's actually supported
+   *  where (it varies a fair bit by browser/OS). */
+  includeSystemAudio?: boolean;
+  /** Fires if system audio was included but then stops mid-recording -- most often
+   *  the user clicking Chrome's own "Stop sharing" bar. Recording is NOT stopped
+   *  when this happens; it just continues on the microphone alone from that point,
+   *  and this callback exists so the UI can tell the user that happened. */
+  onSystemAudioEnded?: () => void;
+}
+
 export class SegmentedRecorder {
   /** How much audio each uploaded chunk covers. Vercel Functions have a hard
    *  4.5MB request body limit on every plan -- a request over that is rejected
@@ -32,7 +48,21 @@ export class SegmentedRecorder {
    *  hint exactly, which is why SEGMENT_MS also leaves headroom. */
   static readonly AUDIO_BITS_PER_SECOND = 64_000;
 
+  /** The stream actually fed to MediaRecorder -- either the raw mic stream, or (when
+   *  includeSystemAudio was used) a mixed-down stream combining it with system/tab
+   *  audio. Tearing this down alone in stop() is NOT enough in the mixed case (see
+   *  micStream/displayStream/audioContext below). */
   private stream: MediaStream | null = null;
+  /** The microphone stream on its own -- kept separately from `stream` so stop() can
+   *  release the actual hardware track even when `stream` is a synthetic mixed one. */
+  private micStream: MediaStream | null = null;
+  /** The getDisplayMedia() stream (audio only by the time start() is done with it --
+   *  its video track is stopped immediately, see start()), when includeSystemAudio
+   *  was used. */
+  private displayStream: MediaStream | null = null;
+  /** The Web Audio graph used to mix micStream + displayStream into `stream`, when
+   *  includeSystemAudio was used. */
+  private audioContext: AudioContext | null = null;
   private mimeType = "";
   private currentRecorder: MediaRecorder | null = null;
   private state: RecorderState = "idle";
@@ -66,9 +96,72 @@ export class SegmentedRecorder {
     return this.mimeType || "audio/webm";
   }
 
-  async start(onSegmentReady: SegmentReadyHandler): Promise<void> {
+  async start(onSegmentReady: SegmentReadyHandler, options: StartOptions = {}): Promise<void> {
     this.onSegmentReady = onSegmentReady;
-    this.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+    try {
+      this.micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (err) {
+      throw new Error(
+        err instanceof Error
+          ? `Couldn't access the microphone: ${err.message}`
+          : "Couldn't access the microphone. Check your browser's permission settings."
+      );
+    }
+
+    if (options.includeSystemAudio) {
+      if (typeof navigator.mediaDevices.getDisplayMedia !== "function") {
+        this.micStream.getTracks().forEach((t) => t.stop());
+        this.micStream = null;
+        throw new Error(
+          'This browser doesn\'t support sharing tab/system audio. Uncheck "Also record the ' +
+            'other side of an online call" and try again, or use a recent Chrome/Edge on desktop.'
+        );
+      }
+
+      let displayStream: MediaStream;
+      try {
+        // video: true is required to make the browser show the share picker at all --
+        // the video track is stopped and discarded immediately below. Only its audio
+        // track (if the user shared one) is kept.
+        displayStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+      } catch {
+        this.micStream.getTracks().forEach((t) => t.stop());
+        this.micStream = null;
+        throw new Error(
+          "Screen/tab sharing was cancelled or blocked, so system audio couldn't be captured. " +
+            'Try again and, in the picker, choose the browser tab your meeting is running in ' +
+            'with "Share tab audio" checked -- or uncheck the system-audio option to record ' +
+            "from the microphone only."
+        );
+      }
+
+      displayStream.getVideoTracks().forEach((t) => t.stop());
+      const systemAudioTracks = displayStream.getAudioTracks();
+
+      if (systemAudioTracks.length === 0) {
+        displayStream.getTracks().forEach((t) => t.stop());
+        this.micStream.getTracks().forEach((t) => t.stop());
+        this.micStream = null;
+        throw new Error(
+          'No audio was shared. In the picker, choose the browser tab your meeting is running ' +
+            'in (not a window or your whole screen) and check "Share tab audio," then try again.'
+        );
+      }
+
+      this.displayStream = new MediaStream(systemAudioTracks);
+      systemAudioTracks[0].addEventListener("ended", () => options.onSystemAudioEnded?.());
+
+      this.audioContext = new AudioContext();
+      await this.audioContext.resume().catch(() => {});
+      const destination = this.audioContext.createMediaStreamDestination();
+      this.audioContext.createMediaStreamSource(this.micStream).connect(destination);
+      this.audioContext.createMediaStreamSource(this.displayStream).connect(destination);
+      this.stream = destination.stream;
+    } else {
+      this.stream = this.micStream;
+    }
+
     this.mimeType = SegmentedRecorder.pickMimeType();
     this.segmentIndex = 0;
     this.segmentAccumulatedMs = 0;
@@ -119,7 +212,18 @@ export class SegmentedRecorder {
       });
     }
 
-    this.stream?.getTracks().forEach((track) => track.stop());
+    // Stop the real hardware/share tracks individually -- when includeSystemAudio was
+    // used, `this.stream` is a synthetic stream generated by the AudioContext graph, and
+    // stopping its own track doesn't release the microphone or the shared tab/screen (the
+    // browser's "sharing" indicator would otherwise keep showing after the recording ends).
+    this.micStream?.getTracks().forEach((track) => track.stop());
+    this.displayStream?.getTracks().forEach((track) => track.stop());
+    if (this.audioContext) {
+      await this.audioContext.close().catch(() => {});
+    }
+    this.micStream = null;
+    this.displayStream = null;
+    this.audioContext = null;
     this.stream = null;
     this.currentRecorder = null;
   }

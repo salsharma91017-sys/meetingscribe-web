@@ -256,6 +256,52 @@ anyway). The branded page is normally invisible — it's only revealed by a `pri
 the duration of the print/save dialog — and everything else in the app is hidden the same way,
 so what actually gets saved as a PDF is just the branded report, not the app UI around it.
 
+### Added: capture the other side of an online call, for earphone users
+
+If you're on an online meeting (Zoom/Meet/Teams) wearing earphones, the microphone alone was
+only ever going to record *your* voice — the other participants' audio goes straight into your
+ears and there's no way for a plain mic recording to pick that up too. There's now a checkbox on
+the "New recording" screen, **"Also record the other side of an online call (share tab/system
+audio)"**, that fixes this: when it's on, starting a recording additionally asks the browser to
+share a tab/window/screen's audio (`getDisplayMedia`) and mixes that with the microphone into one
+track (via the Web Audio API) before it ever reaches the recorder — so both sides of the call end
+up in the same recording and transcript.
+
+A few things worth knowing about this:
+
+- **Chrome/Edge only, and it needs a share picker each time.** `getDisplayMedia` isn't available
+  everywhere (notably not on most mobile browsers), so the checkbox is disabled with an
+  explanation if the browser doesn't support it. Starting a recording with it checked pops the
+  browser's normal screen/tab/window share dialog — this is the browser's own permission UI, not
+  something this app can skip.
+- **For a reliable result, share the browser tab your meeting is running in and check "Share tab
+  audio."** That's been supported broadly for a long time, works the same on Windows/macOS/Linux,
+  and is what the in-app hint under the checkbox suggests. Sharing an entire window or screen
+  instead works for system audio on Windows, but on macOS it needs Chrome 141+ and macOS 14.2+
+  (Apple only opened up third-party system-audio capture at the OS level in 14.2) — on an older
+  Chrome or macOS, that path silently won't offer a "share system audio" option at all. If the
+  meeting itself is running as a desktop app rather than in a browser tab (the Zoom/Teams desktop
+  client, say), sharing its window still only works for audio under those same
+  Chrome-141+/macOS-14.2+ conditions.
+- **If sharing gets cancelled, or nothing with audio gets shared, the recording doesn't silently
+  start mic-only** — it shows a clear error instead (so you don't discover after the meeting that
+  only your side got captured) and you can just try again or uncheck the option.
+- **If you click Chrome's own "Stop sharing" bar mid-meeting**, the recording isn't interrupted —
+  it keeps going on the microphone alone from that point, and a small notice appears saying so.
+
+Implementation-wise, `getDisplayMedia` needs a `video: true` constraint just to make the browser
+show the picker at all (there's no audio-only screen share); the video track it hands back is
+stopped and discarded immediately (never recorded, never stored) and only its audio track is
+kept and mixed in via `AudioContext.createMediaStreamSource` → `createMediaStreamDestination`.
+Verified this whole thing's branching (successful mix, cancelled share, share with no audio
+track, unsupported browser, mic permission denied, and the mid-recording "stop sharing" case all
+correctly tearing down the mic/display tracks and AudioContext) with an isolated Node test
+harness stubbing out `getUserMedia`/`getDisplayMedia`/`MediaRecorder`/`AudioContext`, since none
+of that can be exercised in this environment without a real browser and real device permissions.
+
+Sources on the macOS/Chrome version requirements: [Capturing the Screen With System Sounds on
+Chrome on macOS](https://blog.addpipe.com/getdisplaymedia-allows-capturing-the-screen-with-system-sounds-on-chrome-on-macos/).
+
 ## Known limitations, worth knowing about
 
 - **Storage is per-browser.** Recordings live in that browser's IndexedDB — they won't show up
