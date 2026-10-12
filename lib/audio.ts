@@ -30,6 +30,121 @@ export interface StartOptions {
    *  when this happens; it just continues on the microphone alone from that point,
    *  and this callback exists so the UI can tell the user that happened. */
   onSystemAudioEnded?: () => void;
+  /** A specific microphone to record from (a `deviceId` from enumerateDevices()).
+   *  Omit to use the browser's default input. */
+  micDeviceId?: string;
+  /** "Room meeting mode" -- see buildMicConstraints() for exactly what this changes. */
+  roomMode?: boolean;
+}
+
+export interface MicSettings {
+  deviceId?: string;
+  roomMode?: boolean;
+}
+
+/** The getUserMedia constraints for a given set of mic settings.
+ *
+ *  By default browsers apply call-style voice processing to the mic: noise suppression,
+ *  echo cancellation and automatic gain. That's right for a video call, but noise
+ *  suppression decides what counts as "noise" by loudness and distance -- so in a room
+ *  full of people, quieter or further-away speakers are exactly what it tends to attenuate.
+ *  Room mode turns noise suppression off (and echo cancellation too, unless a call's audio
+ *  is also being captured, where it stays on so a speaker-fed mic doesn't echo it back).
+ *  Auto gain stays on in both modes: it lifts quiet voices, which is the point here.
+ *
+ *  The trade-off is more background noise in the recording. Whether that's a net win depends
+ *  on the room, which is why it's an option and not the default. */
+export function buildMicConstraints(
+  settings: MicSettings,
+  includeSystemAudio = false
+): MediaStreamConstraints {
+  const roomMode = Boolean(settings.roomMode);
+  const audio: MediaTrackConstraints = {
+    noiseSuppression: !roomMode,
+    echoCancellation: roomMode && !includeSystemAudio ? false : true,
+    autoGainControl: true,
+  };
+  if (settings.deviceId) audio.deviceId = { exact: settings.deviceId };
+  return { audio };
+}
+
+/** Opens the microphone with the given settings, turning the browser's raw errors into
+ *  messages that say what to do about them. */
+export async function openMicrophone(
+  settings: MicSettings,
+  includeSystemAudio = false
+): Promise<MediaStream> {
+  try {
+    return await navigator.mediaDevices.getUserMedia(
+      buildMicConstraints(settings, includeSystemAudio)
+    );
+  } catch (err) {
+    const name = (err as { name?: string } | null)?.name;
+    if (settings.deviceId && (name === "OverconstrainedError" || name === "NotFoundError")) {
+      throw new Error(
+        "The selected microphone isn't available any more (unplugged, disabled, or in use " +
+          "elsewhere). Pick another one from the list and try again."
+      );
+    }
+    throw new Error(
+      err instanceof Error
+        ? `Couldn't access the microphone: ${err.message}`
+        : "Couldn't access the microphone. Check your browser's permission settings."
+    );
+  }
+}
+
+/** Maps a raw RMS amplitude (0..1) onto a 0..1 meter position: -60 dBFS (or quieter) is 0
+ *  and 0 dBFS is 1. Normal speech into a decent mic lands roughly in the middle of that range,
+ *  and a mic that's muted or on the wrong device sits near 0. */
+export function rmsToLevel(rms: number): number {
+  if (!(rms > 0)) return 0;
+  const db = 20 * Math.log10(rms);
+  return Math.max(0, Math.min(1, (db + 60) / 60));
+}
+
+/** Reads the live input level of a stream, for a volume meter. Connects the stream to an
+ *  AnalyserNode only -- never to the speakers -- so it can't cause feedback. */
+export class LevelMeter {
+  private analyser: AnalyserNode;
+  private source: MediaStreamAudioSourceNode;
+  private buffer: Float32Array<ArrayBuffer>;
+
+  constructor(
+    stream: MediaStream,
+    private ctx: AudioContext,
+    private ownsContext: boolean
+  ) {
+    this.analyser = ctx.createAnalyser();
+    this.analyser.fftSize = 2048;
+    this.buffer = new Float32Array(this.analyser.fftSize);
+    this.source = ctx.createMediaStreamSource(stream);
+    this.source.connect(this.analyser);
+  }
+
+  /** A meter with its own AudioContext (closed again by dispose()). */
+  static create(stream: MediaStream): LevelMeter {
+    const ctx = new AudioContext();
+    ctx.resume().catch(() => {});
+    return new LevelMeter(stream, ctx, true);
+  }
+
+  /** Current level, 0..1 (see rmsToLevel). */
+  getLevel(): number {
+    this.analyser.getFloatTimeDomainData(this.buffer);
+    let sumSquares = 0;
+    for (let i = 0; i < this.buffer.length; i++) sumSquares += this.buffer[i] * this.buffer[i];
+    return rmsToLevel(Math.sqrt(sumSquares / this.buffer.length));
+  }
+
+  dispose(): void {
+    try {
+      this.source.disconnect();
+    } catch {
+      // already disconnected
+    }
+    if (this.ownsContext) this.ctx.close().catch(() => {});
+  }
 }
 
 export class SegmentedRecorder {
@@ -63,6 +178,9 @@ export class SegmentedRecorder {
   /** The Web Audio graph used to mix micStream + displayStream into `stream`, when
    *  includeSystemAudio was used. */
   private audioContext: AudioContext | null = null;
+  /** Live input level of the microphone, for the on-screen meter. Nice-to-have only: if it
+   *  can't be set up, recording carries on without it. */
+  private meter: LevelMeter | null = null;
   private mimeType = "";
   private currentRecorder: MediaRecorder | null = null;
   private state: RecorderState = "idle";
@@ -99,15 +217,10 @@ export class SegmentedRecorder {
   async start(onSegmentReady: SegmentReadyHandler, options: StartOptions = {}): Promise<void> {
     this.onSegmentReady = onSegmentReady;
 
-    try {
-      this.micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    } catch (err) {
-      throw new Error(
-        err instanceof Error
-          ? `Couldn't access the microphone: ${err.message}`
-          : "Couldn't access the microphone. Check your browser's permission settings."
-      );
-    }
+    this.micStream = await openMicrophone(
+      { deviceId: options.micDeviceId, roomMode: options.roomMode },
+      Boolean(options.includeSystemAudio)
+    );
 
     if (options.includeSystemAudio) {
       if (typeof navigator.mediaDevices.getDisplayMedia !== "function") {
@@ -160,6 +273,14 @@ export class SegmentedRecorder {
       this.stream = destination.stream;
     } else {
       this.stream = this.micStream;
+    }
+
+    try {
+      this.meter = this.audioContext
+        ? new LevelMeter(this.micStream, this.audioContext, false)
+        : LevelMeter.create(this.micStream);
+    } catch {
+      this.meter = null;
     }
 
     this.mimeType = SegmentedRecorder.pickMimeType();
@@ -216,6 +337,8 @@ export class SegmentedRecorder {
     // used, `this.stream` is a synthetic stream generated by the AudioContext graph, and
     // stopping its own track doesn't release the microphone or the shared tab/screen (the
     // browser's "sharing" indicator would otherwise keep showing after the recording ends).
+    this.meter?.dispose();
+    this.meter = null;
     this.micStream?.getTracks().forEach((track) => track.stop());
     this.displayStream?.getTracks().forEach((track) => track.stop());
     if (this.audioContext) {
@@ -226,6 +349,11 @@ export class SegmentedRecorder {
     this.audioContext = null;
     this.stream = null;
     this.currentRecorder = null;
+  }
+
+  /** Current microphone level 0..1 (see rmsToLevel), or null if no meter is available. */
+  getInputLevel(): number | null {
+    return this.meter ? this.meter.getLevel() : null;
   }
 
   getElapsedMs(): number {

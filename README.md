@@ -302,6 +302,46 @@ of that can be exercised in this environment without a real browser and real dev
 Sources on the macOS/Chrome version requirements: [Capturing the Screen With System Sounds on
 Chrome on macOS](https://blog.addpipe.com/getdisplaymedia-allows-capturing-the-screen-with-system-sounds-on-chrome-on-macos/).
 
+### Added: microphone picker, "Room meeting mode", and a live mic-level meter
+
+Aimed at one question: how do you get a recording that actually catches everyone in the room?
+No software setting can make a microphone hear what doesn't reach it — how close the mic is to
+each person matters more than anything here — but three things on the "New recording" screen now
+help you get the most out of whatever mic you have:
+
+- **Microphone picker.** Until now the app always used the browser's default input, which on a
+  laptop with Bluetooth earbuds paired is often the earbuds' mic — and a Bluetooth headset's mic
+  drops into a low-quality call mode, a poor choice for capturing a room. You can now pick a
+  specific mic (e.g. a USB conference mic in the middle of the table). The choice is remembered in
+  this browser. Browsers only reveal device names once mic permission has been granted, so the
+  list fills in after the first "Test microphone" or recording. If a remembered mic is unplugged,
+  it's dropped from the choice instead of making the recording fail.
+- **Room meeting mode** (off by default). Browsers apply call-style voice processing to the mic:
+  noise suppression, echo cancellation and auto gain. Noise suppression decides what is "noise" by
+  loudness and distance, so quieter or further-away speakers in a room are exactly what it tends to
+  attenuate. Room mode turns noise suppression off (and echo cancellation too, unless a call's audio
+  is also being captured, where it stays on so speakers can't echo back); auto gain stays on to lift
+  quiet voices. The trade-off is more background noise in the recording, and whether that's a net
+  win depends on the room — which is why it's a switch and not the default. This is a sensible
+  setting to try, not something measured on real meeting rooms; compare a recording or two.
+- **Test microphone + live level meter.** "Test microphone" opens the mic with exactly the
+  settings a recording would use and shows its live level, so a muted, wrong or too-distant mic is
+  obvious *before* the meeting starts. Talk from where people will sit; the bar should move clearly
+  for everyone. The same meter is shown during recording, and if the mic delivers almost no signal
+  for 15 seconds straight (a muted or dead mic — a merely quiet room doesn't trigger it, since auto
+  gain keeps even a quiet room's noise floor above the threshold) a warning appears, so you find out
+  mid-meeting rather than afterwards.
+
+Raising the recording bitrate was deliberately **not** part of this: recordings are already 64 kbps
+Opus, which is plenty for speech, so more bitrate wouldn't improve transcription while eating into
+the 4.5 MB upload limit.
+
+Checked in a real Chromium browser (the built app, driven by Playwright with Chromium's fake audio
+device): the picker lists devices after permission, test mode and recording both show the meter
+moving against a live signal, switching room mode or device mid-test restarts it cleanly, the
+choices persist, pause/resume still work, and the recording saves. That confirms the plumbing and the
+UI; it can't tell you how a real room sounds, which needs a real mic and a real meeting.
+
 ## Known limitations, worth knowing about
 
 - **Storage is per-browser.** Recordings live in that browser's IndexedDB — they won't show up

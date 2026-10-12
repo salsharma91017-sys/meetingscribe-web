@@ -1,12 +1,38 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { SegmentedRecorder, RecorderState } from "@/lib/audio";
+import { SegmentedRecorder, RecorderState, LevelMeter, openMicrophone } from "@/lib/audio";
 import { addSegment, saveRecording, deleteRecording } from "@/lib/db";
 import { RecordingMeta } from "@/lib/types";
 import { formatElapsed } from "@/lib/format";
 import { MicIcon, StopIcon } from "./icons";
 import BrandHeader from "./BrandHeader";
+
+const MIC_PREF_KEY = "meetingscribe.micDeviceId";
+const ROOM_MODE_PREF_KEY = "meetingscribe.roomMode";
+
+// A meter position (see rmsToLevel in lib/audio.ts) below this is ~-57 dBFS or quieter: a
+// muted or dead mic, not just a quiet room (with auto gain on, even a quiet room's noise
+// floor sits well above this). Held for SILENCE_WARN_MS before warning, so ordinary pauses
+// in conversation don't trigger it.
+const SILENCE_LEVEL = 0.05;
+const SILENCE_WARN_MS = 15_000;
+
+function LevelBar({ level }: { level: number }) {
+  const pct = Math.round(Math.max(0, Math.min(1, level)) * 100);
+  return (
+    <div
+      role="meter"
+      aria-label="Microphone level"
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={pct}
+      className="h-2 w-full rounded-full bg-white/10 overflow-hidden"
+    >
+      <div className="h-full rounded-full bg-brand-gradient" style={{ width: `${pct}%` }} />
+    </div>
+  );
+}
 
 export default function Recorder({
   onDone,
@@ -38,6 +64,127 @@ export default function Recorder({
   const segmentCountRef = useRef(0);
   const rafRef = useRef<number | null>(null);
 
+  const [micDevices, setMicDevices] = useState<{ deviceId: string; label: string }[]>([]);
+  const [selectedDeviceId, setSelectedDeviceId] = useState("");
+  const [roomMode, setRoomMode] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [level, setLevel] = useState(0);
+  const [noSoundWarning, setNoSoundWarning] = useState(false);
+  const levelRef = useRef(0);
+  const silentSinceRef = useRef<number | null>(null);
+
+  // Meter smoothing: jump up instantly, fall back gradually, so a spoken word reads as a
+  // visible bump instead of a flicker.
+  function smoothLevel(raw: number): number {
+    levelRef.current = Math.max(raw, levelRef.current * 0.92);
+    return levelRef.current;
+  }
+
+  async function refreshDevices() {
+    try {
+      const all = await navigator.mediaDevices.enumerateDevices();
+      // Browsers don't reveal device ids/names until the mic permission has been granted, so
+      // the list stays empty (just "Default microphone") until then. Chrome also lists
+      // "default" and "communications" aliases of real devices, which only add duplicates.
+      const inputs = all.filter(
+        (d) =>
+          d.kind === "audioinput" &&
+          d.deviceId &&
+          d.deviceId !== "default" &&
+          d.deviceId !== "communications"
+      );
+      setMicDevices(
+        inputs.map((d, i) => ({ deviceId: d.deviceId, label: d.label || `Microphone ${i + 1}` }))
+      );
+      // A remembered mic that's no longer plugged in would make recording fail outright.
+      if (inputs.length > 0) {
+        setSelectedDeviceId((prev) =>
+          prev && !inputs.some((d) => d.deviceId === prev) ? "" : prev
+        );
+      }
+    } catch {
+      // enumerateDevices unavailable -- the picker just stays on "Default microphone".
+    }
+  }
+
+  useEffect(() => {
+    try {
+      setSelectedDeviceId(localStorage.getItem(MIC_PREF_KEY) ?? "");
+      setRoomMode(localStorage.getItem(ROOM_MODE_PREF_KEY) === "1");
+    } catch {
+      // storage blocked -- defaults are fine
+    }
+    if (typeof navigator === "undefined" || !navigator.mediaDevices?.enumerateDevices) return;
+    refreshDevices();
+    navigator.mediaDevices.addEventListener?.("devicechange", refreshDevices);
+    return () => navigator.mediaDevices.removeEventListener?.("devicechange", refreshDevices);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function handleMicChange(deviceId: string) {
+    setSelectedDeviceId(deviceId);
+    try {
+      localStorage.setItem(MIC_PREF_KEY, deviceId);
+    } catch {
+      // ignore
+    }
+  }
+
+  function handleRoomModeChange(on: boolean) {
+    setRoomMode(on);
+    try {
+      localStorage.setItem(ROOM_MODE_PREF_KEY, on ? "1" : "0");
+    } catch {
+      // ignore
+    }
+  }
+
+  // "Test microphone": opens the mic with exactly the settings a recording would use and
+  // shows its live level, so a dead/wrong/too-distant mic is obvious *before* the meeting
+  // rather than after. Restarts if the device or mode changes while it's running.
+  useEffect(() => {
+    if (!testing) return;
+    let cancelled = false;
+    let raf = 0;
+    let stream: MediaStream | null = null;
+    let meter: LevelMeter | null = null;
+
+    (async () => {
+      try {
+        stream = await openMicrophone(
+          { deviceId: selectedDeviceId || undefined, roomMode },
+          includeSystemAudio
+        );
+        if (cancelled) {
+          stream.getTracks().forEach((t) => t.stop());
+          return;
+        }
+        meter = LevelMeter.create(stream);
+        refreshDevices(); // names are available now that permission has been granted
+        const loop = () => {
+          if (meter) setLevel(smoothLevel(meter.getLevel()));
+          raf = requestAnimationFrame(loop);
+        };
+        loop();
+      } catch (e) {
+        if (!cancelled) {
+          setError(e instanceof Error ? e.message : "Couldn't access the microphone.");
+          setTesting(false);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(raf);
+      meter?.dispose();
+      stream?.getTracks().forEach((t) => t.stop());
+      levelRef.current = 0;
+      setLevel(0);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [testing, selectedDeviceId, roomMode, includeSystemAudio]);
+
   useEffect(() => {
     return () => {
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
@@ -53,6 +200,18 @@ export default function Recorder({
     const recorder = recorderRef.current;
     if (recorder && recorder.getState() !== "idle") {
       setElapsedMs(recorder.getElapsedMs());
+      const raw = recorder.getInputLevel();
+      if (raw !== null) {
+        setLevel(smoothLevel(raw));
+        if (recorder.getState() === "recording" && raw < SILENCE_LEVEL) {
+          const now = performance.now();
+          if (silentSinceRef.current === null) silentSinceRef.current = now;
+          else if (now - silentSinceRef.current > SILENCE_WARN_MS) setNoSoundWarning(true);
+        } else {
+          silentSinceRef.current = null;
+          setNoSoundWarning(false);
+        }
+      }
     }
     rafRef.current = requestAnimationFrame(tick);
   }
@@ -60,6 +219,10 @@ export default function Recorder({
   async function handleStart() {
     setError(null);
     setSystemAudioNotice(null);
+    setTesting(false);
+    levelRef.current = 0;
+    silentSinceRef.current = null;
+    setNoSoundWarning(false);
     const id = crypto.randomUUID();
     recordingIdRef.current = id;
     segmentCountRef.current = 0;
@@ -82,6 +245,8 @@ export default function Recorder({
         },
         {
           includeSystemAudio,
+          micDeviceId: selectedDeviceId || undefined,
+          roomMode,
           onSystemAudioEnded: () =>
             setSystemAudioNotice(
               "Tab/system audio sharing stopped — still recording your microphone."
@@ -181,6 +346,84 @@ export default function Recorder({
           {state === "recording" && "Recording…"}
           {state === "paused" && "Paused"}
         </div>
+
+        {state !== "idle" && (
+          <div className="w-full max-w-xs">
+            <div className="text-[11px] text-slate-500 mb-1">Mic level</div>
+            <LevelBar level={level} />
+          </div>
+        )}
+
+        {noSoundWarning && state === "recording" && (
+          <p className="text-xs text-amber-400 text-center max-w-xs">
+            Almost no signal from the microphone for a while. If people are talking, check the
+            mic isn't muted and that the right one is selected — otherwise this recording will
+            be mostly empty.
+          </p>
+        )}
+
+        {state === "idle" && (
+          <div className="w-full max-w-xs space-y-3">
+            <div>
+              <label htmlFor="mic-select" className="block text-xs text-slate-400 mb-1">
+                Microphone
+              </label>
+              <select
+                id="mic-select"
+                value={selectedDeviceId}
+                onChange={(e) => handleMicChange(e.target.value)}
+                className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-slate-200 [color-scheme:dark]"
+              >
+                <option value="">Default microphone</option>
+                {micDevices.map((d) => (
+                  <option key={d.deviceId} value={d.deviceId}>
+                    {d.label}
+                  </option>
+                ))}
+              </select>
+              {micDevices.length === 0 && (
+                <p className="mt-1 text-[11px] text-slate-500">
+                  Your other microphones are listed here once the browser has mic access — tap
+                  Test microphone below.
+                </p>
+              )}
+            </div>
+
+            <label className="flex items-start gap-2 text-xs text-slate-400 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={roomMode}
+                onChange={(e) => handleRoomModeChange(e.target.checked)}
+                className="mt-0.5 accent-accent"
+              />
+              <span>
+                Room meeting mode — turns off the browser&apos;s noise suppression so quieter,
+                more distant voices are less likely to be filtered out. Best for in-person
+                meetings; it can let in more background noise.
+              </span>
+            </label>
+
+            <div>
+              <button
+                type="button"
+                onClick={() => setTesting((t) => !t)}
+                className="text-xs border border-white/15 text-slate-200 rounded-full px-4 py-1.5 hover:bg-white/5 transition"
+              >
+                {testing ? "Stop test" : "Test microphone"}
+              </button>
+              {testing && (
+                <div className="mt-3">
+                  <LevelBar level={level} />
+                  <p className="mt-1.5 text-[11px] text-slate-500">
+                    Talk the way people will in the meeting, from where they&apos;ll sit. The bar
+                    should move clearly for everyone — if it barely moves for quieter or
+                    further-away voices, move the mic closer.
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
         {state === "idle" && (
           <label className="flex items-start gap-2 max-w-xs text-xs text-slate-400 cursor-pointer">
