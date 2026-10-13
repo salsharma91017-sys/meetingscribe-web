@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+import { buildSystemPrompt, buildUserContent, parseReportResponse } from "@/lib/reportFormat";
+import { claudeCostUsd, positiveNumber, ClaudePrice } from "@/lib/pricing";
 
 export const runtime = "nodejs";
 // Vercel's own default AND maximum on every plan (Hobby included) is already 300s, so
@@ -10,14 +12,8 @@ export const runtime = "nodejs";
 // timed out.").
 export const maxDuration = 300;
 
-const SYSTEM_PROMPT =
-  "You are an expert note-taker who writes clear, accurate reports strictly from the " +
-  "transcript you are given. You never invent names, numbers, dates, or commitments that " +
-  "are not present in the transcript. " +
-  "Respond in exactly this format and nothing else: first a single line starting with " +
-  "'TITLE: ' followed by a short, specific meeting title (5-8 words, no quotes, based on " +
-  "what was actually discussed — e.g. 'TITLE: Q3 Budget Review With Finance Team'), then a " +
-  "line containing only '---', then the full report in Markdown.";
+// The system prompt (including the off-topic guard rails) is built per request by
+// buildSystemPrompt() in lib/reportFormat.ts.
 
 // claude-sonnet-4-5-20250929 (the previous default here) is on Anthropic's deprecation
 // path with a tentative API retirement no sooner than 2026-09-29 -- claude-sonnet-5 is
@@ -47,6 +43,8 @@ interface AnthropicMessage {
 interface AnthropicCallResult {
   text: string;
   stopReason: string | null;
+  inputTokens: number;
+  outputTokens: number;
 }
 
 /** One non-streaming call to the Messages API. Throws (with a short, user-facing message)
@@ -54,6 +52,7 @@ interface AnthropicCallResult {
 async function callClaude(
   apiKey: string,
   model: string,
+  system: string,
   messages: AnthropicMessage[],
   maxTokens: number
 ): Promise<AnthropicCallResult> {
@@ -67,7 +66,7 @@ async function callClaude(
     body: JSON.stringify({
       model,
       max_tokens: maxTokens,
-      system: SYSTEM_PROMPT,
+      system,
       messages,
     }),
   });
@@ -80,25 +79,19 @@ async function callClaude(
   const json = JSON.parse(bodyText) as {
     content?: AnthropicContentBlock[];
     stop_reason?: string | null;
+    usage?: { input_tokens?: number; output_tokens?: number };
   };
   const text = (json.content ?? [])
     .filter((block) => block.type === "text" && typeof block.text === "string")
     .map((block) => block.text)
     .join("");
 
-  return { text, stopReason: json.stop_reason ?? null };
-}
-
-/** Splits the model's "TITLE: ...\n---\n<report>" response into its parts. Falls back to
- *  treating the whole response as the report if the model didn't follow the format. */
-function parseReportResponse(raw: string): { title: string | null; report: string } {
-  const match = raw.match(/^\s*TITLE:\s*(.+?)\s*\r?\n-{3,}\s*\r?\n([\s\S]*)$/);
-  if (match) {
-    const title = match[1].trim().replace(/^["']|["']$/g, "");
-    const report = match[2].trim();
-    if (title && report) return { title, report };
-  }
-  return { title: null, report: raw.trim() };
+  return {
+    text,
+    stopReason: json.stop_reason ?? null,
+    inputTokens: json.usage?.input_tokens ?? 0,
+    outputTokens: json.usage?.output_tokens ?? 0,
+  };
 }
 
 export async function POST(req: Request) {
@@ -113,7 +106,13 @@ export async function POST(req: Request) {
     );
   }
 
-  let payload: { transcript?: string; templateInstructions?: string; model?: string };
+  let payload: {
+    transcript?: string;
+    templateInstructions?: string;
+    model?: string;
+    meetingScope?: string;
+    filterOffTopic?: boolean;
+  };
   try {
     payload = await req.json();
   } catch {
@@ -126,8 +125,18 @@ export async function POST(req: Request) {
   }
 
   const model = payload.model || process.env.CLAUDE_MODEL || DEFAULT_MODEL;
-  const userContent =
-    `${templateInstructions.trim()}\n\n---TRANSCRIPT START---\n${transcript.trim()}\n---TRANSCRIPT END---`;
+  // On unless the client explicitly turns it off.
+  const filterOffTopic = payload.filterOffTopic !== false;
+  const system = buildSystemPrompt(filterOffTopic);
+  const userContent = buildUserContent(templateInstructions, transcript, filterOffTopic ? payload.meetingScope : undefined);
+
+  // Optional price override (both values required), for models missing from lib/pricing.ts.
+  const inOverride = positiveNumber(process.env.CLAUDE_INPUT_USD_PER_MTOK);
+  const outOverride = positiveNumber(process.env.CLAUDE_OUTPUT_USD_PER_MTOK);
+  const priceOverride: ClaudePrice | null =
+    inOverride !== undefined && outOverride !== undefined
+      ? { inputUsdPerMTok: inOverride, outputUsdPerMTok: outOverride }
+      : null;
 
   // Some templates (e.g. the white-paper-style ones, or long/dense meetings like an
   // hours-long operations review) ask for a genuinely long, detailed document. A single
@@ -167,6 +176,8 @@ export async function POST(req: Request) {
     let full = "";
     let stopReason: string | null = null;
     let continuations = 0;
+    let inputTokens = 0;
+    let outputTokens = 0;
 
     while (true) {
       const messages: AnthropicMessage[] =
@@ -179,24 +190,43 @@ export async function POST(req: Request) {
             ];
       const maxTokens = continuations === 0 ? INITIAL_MAX_TOKENS : CONTINUATION_MAX_TOKENS;
 
-      const result = await callClaude(apiKey, model, messages, maxTokens);
+      const result = await callClaude(apiKey, model, system, messages, maxTokens);
       full += result.text;
       stopReason = result.stopReason;
+      inputTokens += result.inputTokens;
+      outputTokens += result.outputTokens;
 
       if (stopReason !== "max_tokens" || continuations >= MAX_CONTINUATIONS) break;
       continuations += 1;
     }
 
-    let { title, report } = parseReportResponse(full.trim());
+    const parsed = parseReportResponse(full.trim());
+    let report = parsed.report;
+    const { title } = parsed;
+    const omitted = filterOffTopic ? parsed.omitted : [];
 
-    if (stopReason === "max_tokens") {
+    // With the filter on, the model ends the report with an '===OMITTED===' marker. If that
+    // marker is present the report reached its end, so a max_tokens stop reason can only mean
+    // the (short) omitted list was clipped -- not that the report itself was cut off.
+    const truncated = stopReason === "max_tokens" && !(filterOffTopic && parsed.omittedMarkerFound);
+    if (truncated) {
       report +=
         "\n\n---\n\n*Note: this report was cut off because it hit the model's maximum " +
         "output length, even after an automatic continuation. Try regenerating, splitting " +
         "the meeting into shorter recordings, or using a shorter/less detailed template.*";
     }
 
-    return NextResponse.json({ report, title, truncated: stopReason === "max_tokens" });
+    const costUsd = claudeCostUsd(model, inputTokens, outputTokens, priceOverride);
+
+    return NextResponse.json({
+      report,
+      title,
+      omitted,
+      truncated,
+      usage: { inputTokens, outputTokens },
+      costUsd,
+      model,
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown report generation error";
     return NextResponse.json({ error: message }, { status: 500 });

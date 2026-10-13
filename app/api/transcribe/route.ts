@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { positiveNumber, transcriptionCostUsd, DEFAULT_TRANSCRIPTION_USD_PER_MINUTE } from "@/lib/pricing";
 
 // Node runtime (not edge): we need FormData/Buffer handling and a longer
 // execution budget than the edge runtime typically allows.
@@ -43,7 +44,9 @@ export async function POST(req: Request) {
   const outgoing = new FormData();
   outgoing.append("file", file, file.name || "segment.webm");
   outgoing.append("model", "whisper-1");
-  outgoing.append("response_format", "text");
+  // verbose_json (instead of plain text) also returns the audio duration, which is what
+  // Whisper bills by -- used to show the cost of each scribe.
+  outgoing.append("response_format", "verbose_json");
 
   try {
     const response = await fetch("https://api.openai.com/v1/audio/transcriptions", {
@@ -57,7 +60,23 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: extractOpenAiError(bodyText) }, { status: response.status });
     }
 
-    return NextResponse.json({ text: bodyText.trim() });
+    let text = "";
+    let durationSeconds: number | null = null;
+    try {
+      const json = JSON.parse(bodyText) as { text?: string; duration?: number | string };
+      text = (json.text ?? "").trim();
+      const d = Number(json.duration);
+      durationSeconds = Number.isFinite(d) && d > 0 ? d : null;
+    } catch {
+      // Unexpected non-JSON body: treat it as the transcript itself.
+      text = bodyText.trim();
+    }
+
+    // The client falls back to its own measured segment length if the duration is missing.
+    const rate = positiveNumber(process.env.WHISPER_USD_PER_MINUTE) ?? DEFAULT_TRANSCRIPTION_USD_PER_MINUTE;
+    const costUsd = durationSeconds !== null ? transcriptionCostUsd(durationSeconds, rate) : null;
+
+    return NextResponse.json({ text, durationSeconds, costUsd, usdPerMinute: rate });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown transcription error";
     return NextResponse.json({ error: message }, { status: 500 });

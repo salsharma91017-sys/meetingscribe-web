@@ -342,6 +342,34 @@ moving against a live signal, switching room mode or device mid-test restarts it
 choices persist, pause/resume still work, and the recording saves. That confirms the plumbing and the
 UI; it can't tell you how a real room sounds, which needs a real mic and a real meeting.
 
+### Added: AI cost on every scribe, and an off-topic guard rail (2026-10-13)
+
+**Cost.** Each scribe now shows an "AI cost" card on its page (and the total next to it in the
+recordings list): what transcription cost (audio minutes x the Whisper rate) and what the report
+cost (input and output tokens x the Claude rate). It is cumulative, so every re-transcription or
+report regeneration of that scribe adds to it, because each is billed separately. Amounts are in USD
+and estimated from list prices (whisper-1 $0.006/min, Claude Sonnet 5 $2 / $10 per million tokens,
+checked 2026-10-13), so your provider invoices remain the source of truth. If a price changes, set
+`WHISPER_USD_PER_MINUTE`, or `CLAUDE_INPUT_USD_PER_MTOK` and `CLAUDE_OUTPUT_USD_PER_MTOK` together
+(see `.env.example`). A Claude model that isn't in the price table is shown as "price unknown" rather than guessed.
+
+The transcript (and its cost) is now saved as soon as transcription finishes, so if the report step
+fails you can retry it without paying to transcribe the same audio again.
+
+**Guard rail.** The template picker has a "Leave off-topic conversation out of the notes" option (on by
+default) and an optional "Meeting scope" box. The AI is told to keep only content that serves the meeting's
+scope (discussion, decisions, figures, dates, risks, actions) and to leave out small talk, banter, personal
+chat, side conversations, mid-meeting interruptions and tangents, never turning an off-topic remark into a
+decision or action, and to word things neutrally (no reproduced profanity or personal remarks). Without a
+scope it infers the purpose from the conversation. Because it is applied on the server it covers every
+template, including custom ones. Under the report, "Left out as off-topic" lists in general terms what was
+dropped, so you can spot a mistake; the full conversation is always still in the Transcript tab.
+
+Limitations: this is done by instructing the AI, so it's a strong filter, not a guarantee, and it can
+occasionally drop something that mattered or keep something that didn't (a clear scope helps). The cost
+of a report call that fails or times out isn't captured. Scribes made before this update have no cost
+history. To drop the neutral-wording rule, edit `SCOPE_GUARD_RAILS` in `lib/reportFormat.ts`.
+
 ## Known limitations, worth knowing about
 
 - **Storage is per-browser.** Recordings live in that browser's IndexedDB — they won't show up

@@ -9,7 +9,15 @@ import {
   saveRecording,
 } from "@/lib/db";
 import { RecordingMeta, RecordingSegment, Template } from "@/lib/types";
-import { formatElapsed } from "@/lib/format";
+import { formatElapsed, formatUsd } from "@/lib/format";
+import {
+  DEFAULT_TRANSCRIPTION_USD_PER_MINUTE,
+  addReport,
+  addTranscription,
+  emptyCost,
+  totalCostUsd,
+  transcriptionCostUsd,
+} from "@/lib/pricing";
 import { renderMarkdown } from "@/lib/markdown";
 import { readJsonResponse } from "@/lib/apiResponse";
 import {
@@ -29,6 +37,8 @@ type Tab = "report" | "transcript";
 // Shown on the branded PDF export only (see the hidden "print view" near the bottom of the
 // component and handleExportPdf()) -- kept in the same voice as the "About KoreVia Solutions"
 // blurb on the login page, but focused on MeetingScribe itself.
+const FILTER_PREF_KEY = "meetingscribe.filterOffTopic";
+
 const MEETINGSCRIBE_BLURB =
   "MeetingScribe is KoreVia Solutions' AI-powered meeting companion. It records your " +
   "conversations, transcribes them automatically, and turns them into clear, structured " +
@@ -54,6 +64,8 @@ export default function RecordingDetail({
   const [showTemplatePicker, setShowTemplatePicker] = useState(false);
   const [templates, setTemplates] = useState<Template[]>([]);
   const [forceRetranscribe, setForceRetranscribe] = useState(false);
+  const [meetingScope, setMeetingScope] = useState("");
+  const [filterOffTopic, setFilterOffTopic] = useState(true);
 
   const audioRef = useRef<HTMLAudioElement>(null);
   const objectUrlRef = useRef<string | null>(null);
@@ -139,6 +151,15 @@ export default function RecordingDetail({
   async function openTemplatePicker() {
     const list = await listTemplates();
     setTemplates(list);
+    // Prefill from what this scribe used last time; otherwise the saved preference (default on).
+    let pref = true;
+    try {
+      pref = localStorage.getItem(FILTER_PREF_KEY) !== "false";
+    } catch {
+      // storage unavailable: keep the default
+    }
+    setFilterOffTopic(meta?.filterOffTopic ?? pref);
+    setMeetingScope(meta?.meetingScope ?? "");
     setShowTemplatePicker(true);
   }
 
@@ -147,6 +168,13 @@ export default function RecordingDetail({
     setShowTemplatePicker(false);
     setProcessing(true);
 
+    const scope = meetingScope.trim();
+    try {
+      localStorage.setItem(FILTER_PREF_KEY, String(filterOffTopic));
+    } catch {
+      // storage unavailable: the choice just isn't remembered
+    }
+
     // If this recording already has a transcript (e.g. you're trying a different
     // template, or regenerating after a failed report), reuse it instead of
     // re-transcribing the audio from scratch every time -- that's slower, costs an
@@ -154,6 +182,11 @@ export default function RecordingDetail({
     // you explicitly asked to re-transcribe.
     const reuseExistingTranscript = Boolean(meta.transcript && meta.transcript.trim()) && !forceRetranscribe;
     setForceRetranscribe(false);
+
+    // `working` always holds the latest saved state, so a failure part-way through still
+    // keeps what was already paid for (the transcript and its cost).
+    let working: RecordingMeta = meta;
+    let cost = meta.cost ?? emptyCost();
 
     setProcessingStatus(
       reuseExistingTranscript
@@ -169,6 +202,7 @@ export default function RecordingDetail({
         transcript = meta.transcript!.trim();
       } else {
         const transcriptParts: string[] = [];
+        let firstBilled = true;
         for (let i = 0; i < segments.length; i++) {
           setProcessingStatus(`Transcribing part ${i + 1} of ${segments.length}…`);
           const segment = segments[i];
@@ -192,7 +226,7 @@ export default function RecordingDetail({
           form.append("file", segment.blob, `segment-${i}.${ext}`);
 
           const res = await fetch("/api/transcribe", { method: "POST", body: form });
-          let data: { text?: string };
+          let data: { text?: string; durationSeconds?: number | null; costUsd?: number | null };
           try {
             data = await readJsonResponse(res);
           } catch (e) {
@@ -200,17 +234,47 @@ export default function RecordingDetail({
             throw new Error(`Transcription failed for part ${i + 1}: ${detail}`);
           }
           transcriptParts.push(String(data.text ?? ""));
+
+          // Whisper bills by audio duration. Use the duration it reports; if that's missing,
+          // fall back to our own measured segment length at the default rate.
+          const seconds =
+            typeof data.durationSeconds === "number" && data.durationSeconds > 0
+              ? data.durationSeconds
+              : segment.durationMs / 1000;
+          const usd =
+            typeof data.costUsd === "number"
+              ? data.costUsd
+              : transcriptionCostUsd(seconds, DEFAULT_TRANSCRIPTION_USD_PER_MINUTE);
+          cost = addTranscription(cost, seconds, usd, firstBilled);
+          firstBilled = false;
         }
         transcript = transcriptParts.join("\n\n").trim();
+
+        // Save the transcript (and what it cost) straight away, so a failure while writing the
+        // report doesn't mean paying to transcribe the same audio again.
+        working = { ...working, transcript, cost };
+        await saveRecording(working);
+        setMeta(working);
       }
 
       setProcessingStatus("Writing report…");
       const reportRes = await fetch("/api/generate-report", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ transcript, templateInstructions: template.instructions }),
+        body: JSON.stringify({
+          transcript,
+          templateInstructions: template.instructions,
+          meetingScope: scope || undefined,
+          filterOffTopic,
+        }),
       });
-      let reportData: { report?: string; title?: string };
+      let reportData: {
+        report?: string;
+        title?: string;
+        omitted?: string[];
+        usage?: { inputTokens?: number; outputTokens?: number };
+        costUsd?: number | null;
+      };
       try {
         reportData = await readJsonResponse(reportRes);
       } catch (e) {
@@ -223,21 +287,32 @@ export default function RecordingDetail({
           ? reportData.title.trim()
           : null;
 
+      cost = addReport(
+        cost,
+        reportData.usage?.inputTokens ?? 0,
+        reportData.usage?.outputTokens ?? 0,
+        typeof reportData.costUsd === "number" ? reportData.costUsd : null
+      );
+
       const updated: RecordingMeta = {
-        ...meta,
-        title: generatedTitle ?? meta.title,
+        ...working,
+        title: generatedTitle ?? working.title,
         status: "done",
         transcript,
         reportMarkdown: String(reportData.report ?? ""),
         templateIdUsed: template.id,
         errorMessage: undefined,
+        cost,
+        meetingScope: scope || undefined,
+        filterOffTopic,
+        omittedItems: filterOffTopic && Array.isArray(reportData.omitted) ? reportData.omitted : [],
       };
       await saveRecording(updated);
       setMeta(updated);
       setActiveTab("report");
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";
-      const updated: RecordingMeta = { ...meta, status: "error", errorMessage: message };
+      const updated: RecordingMeta = { ...working, cost, status: "error", errorMessage: message };
       await saveRecording(updated);
       setMeta(updated);
     } finally {
@@ -427,6 +502,54 @@ export default function RecordingDetail({
           <p className="mt-4 text-sm text-red-400">Something went wrong: {meta.errorMessage}</p>
         )}
 
+        {/* AI cost for this scribe */}
+        {meta.cost && totalCostUsd(meta.cost) > 0 ? (
+          <div className="mt-4 glass-card rounded-xl p-3 text-xs text-slate-400" data-testid="cost-card">
+            <div className="flex items-baseline justify-between">
+              <span className="font-medium text-slate-300">AI cost</span>
+              <span className="text-sm font-semibold text-slate-100">
+                {formatUsd(totalCostUsd(meta.cost))}
+                {meta.cost.reportPriceUnknown ? "+" : ""}
+              </span>
+            </div>
+            <div className="mt-1.5 flex justify-between">
+              <span>
+                Transcription · {(meta.cost.transcriptionSeconds / 60).toFixed(1)} min
+                {meta.cost.transcriptionRuns > 1 ? ` · ${meta.cost.transcriptionRuns} runs` : ""}
+              </span>
+              <span>{formatUsd(meta.cost.transcriptionUsd)}</span>
+            </div>
+            <div className="flex justify-between">
+              <span>
+                {meta.cost.reportRuns === 0
+                  ? "Report · not written yet"
+                  : `Report · ${(meta.cost.reportInputTokens + meta.cost.reportOutputTokens).toLocaleString()} tokens${
+                      meta.cost.reportRuns > 1 ? ` · ${meta.cost.reportRuns} runs` : ""
+                    }`}
+              </span>
+              <span>
+                {meta.cost.reportRuns === 0
+                  ? "—"
+                  : meta.cost.reportPriceUnknown
+                  ? "price unknown"
+                  : formatUsd(meta.cost.reportUsd)}
+              </span>
+            </div>
+            <p className="mt-2 text-[11px] text-slate-500">
+              USD, estimated from list prices. Includes every time this scribe was transcribed or
+              regenerated.
+              {meta.cost.reportPriceUnknown
+                ? " Some report cost couldn't be priced for the model in use, so the total is understated."
+                : ""}
+            </p>
+          </div>
+        ) : hasContent ? (
+          <p className="mt-4 text-[11px] text-slate-500">
+            AI cost isn&apos;t tracked for this scribe — it was made before cost tracking was added. The next
+            transcription or report will start the count.
+          </p>
+        ) : null}
+
         {/* Tabs + content */}
         {hasContent && (
           <>
@@ -466,6 +589,23 @@ export default function RecordingDetail({
               )}
             </div>
 
+            {activeTab === "report" && meta.omittedItems && meta.omittedItems.length > 0 && (
+              <details className="mt-3 glass-card rounded-xl p-3 text-xs text-slate-400" data-testid="omitted-details">
+                <summary className="cursor-pointer font-medium text-slate-300">
+                  Left out as off-topic ({meta.omittedItems.length})
+                </summary>
+                <ul className="mt-2 list-disc pl-5 space-y-0.5">
+                  {meta.omittedItems.map((item, i) => (
+                    <li key={i}>{item}</li>
+                  ))}
+                </ul>
+                <p className="mt-2 text-[11px] text-slate-500">
+                  These aren&apos;t in the report, copy, share or PDF. The full conversation is still in the
+                  Transcript tab.
+                </p>
+              </details>
+            )}
+
             <div className="mt-4 flex gap-3">
               <button
                 onClick={handleShare}
@@ -501,8 +641,39 @@ export default function RecordingDetail({
 
       {showTemplatePicker && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center z-20 p-4">
-          <div className="glass-card rounded-xl shadow-glow w-full max-w-sm p-4">
+          <div className="glass-card rounded-xl shadow-glow w-full max-w-sm p-4 max-h-[90vh] overflow-y-auto">
             <h2 className="text-base font-semibold text-slate-100 mb-3">Choose a report template</h2>
+
+            {/* Above the template list on purpose: picking a template starts generating at once. */}
+            <label className="flex items-start gap-2 mb-2 px-1 text-xs text-slate-300 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={filterOffTopic}
+                onChange={(e) => setFilterOffTopic(e.target.checked)}
+                className="mt-0.5 accent-accent"
+              />
+              <span>Leave off-topic conversation out of the notes (small talk, side chats, interruptions)</span>
+            </label>
+            {filterOffTopic && (
+              <div className="mb-3 px-1">
+                <label className="block text-xs text-slate-400 mb-1" htmlFor="meeting-scope">
+                  Meeting scope (optional)
+                </label>
+                <textarea
+                  id="meeting-scope"
+                  rows={2}
+                  maxLength={500}
+                  value={meetingScope}
+                  onChange={(e) => setMeetingScope(e.target.value)}
+                  placeholder="e.g. Monthly operations review — sales, marketing, financials, staffing. Anything else counts as off-topic."
+                  className="w-full rounded-lg bg-white/5 border border-white/10 px-2 py-1.5 text-xs text-slate-200 placeholder:text-slate-600"
+                />
+                <p className="mt-1 text-[11px] text-slate-500">
+                  Without a scope, the AI works out the meeting&apos;s purpose from the conversation.
+                </p>
+              </div>
+            )}
+
             <ul className="space-y-2">
               {templates.map((t) => (
                 <li key={t.id}>

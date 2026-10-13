@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 import { RecordingMeta } from "@/lib/types";
-import { formatDate, formatElapsed } from "@/lib/format";
+import { formatDate, formatElapsed, formatUsd } from "@/lib/format";
+import { totalCostUsd } from "@/lib/pricing";
 import { MicIcon } from "./icons";
 import BrandHeader from "./BrandHeader";
 
@@ -84,6 +85,7 @@ export default function RecordingsList({
                     <div className="font-semibold text-slate-100 truncate">{r.title}</div>
                     <div className="text-xs text-slate-500 mt-1">
                       {formatDate(r.createdAt)} · {formatElapsed(r.durationMs)}
+                      {r.cost ? ` · ${formatUsd(totalCostUsd(r.cost))}` : ""}
                     </div>
                     <div className={`text-xs font-semibold mt-2 ${status.className}`}>{status.text}</div>
                   </button>
