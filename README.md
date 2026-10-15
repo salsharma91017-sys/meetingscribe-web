@@ -370,6 +370,18 @@ occasionally drop something that mattered or keep something that didn't (a clear
 of a report call that fails or times out isn't captured. Scribes made before this update have no cost
 history. To drop the neutral-wording rule, edit `SCOPE_GUARD_RAILS` in `lib/reportFormat.ts`.
 
+### Added: your own branding (or none) on the PDF export (2026-10-15)
+
+"Export report as PDF" now opens a small dialog with three choices: **KoreVia MeetingScribe** (the
+default: KoreVia logo and the MeetingScribe blurb), **My own branding**, or **No branding**. With your
+own branding you can add a logo (PNG, JPEG, WebP or SVG, shrunk to fit), an organisation name, a tagline,
+an intro blurb and a footer line; anything left empty is simply not printed, and nothing from KoreVia
+appears. "No branding" prints only the title, date and report. Your choice is remembered in this browser
+(localStorage, so per device, and never uploaded); a logo that can't be stored is still used for that export.
+
+Tip: Chrome's print dialog has a "Headers and footers" option that adds the page URL and date to each
+page. That's the browser's, not the app's; untick it for a fully clean PDF.
+
 ## Known limitations, worth knowing about
 
 - **Storage is per-browser.** Recordings live in that browser's IndexedDB — they won't show up

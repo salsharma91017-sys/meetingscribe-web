@@ -20,6 +20,7 @@ import {
 } from "@/lib/pricing";
 import { renderMarkdown } from "@/lib/markdown";
 import { readJsonResponse } from "@/lib/apiResponse";
+import { PdfBranding, DEFAULT_BRANDING, loadBranding, saveBranding, logoFileToDataUrl } from "@/lib/branding";
 import {
   ChevronLeftIcon,
   ChevronRightIcon,
@@ -64,6 +65,9 @@ export default function RecordingDetail({
   const [showTemplatePicker, setShowTemplatePicker] = useState(false);
   const [templates, setTemplates] = useState<Template[]>([]);
   const [forceRetranscribe, setForceRetranscribe] = useState(false);
+  const [showExportDialog, setShowExportDialog] = useState(false);
+  const [branding, setBranding] = useState<PdfBranding>(DEFAULT_BRANDING);
+  const [brandingNote, setBrandingNote] = useState("");
   const [meetingScope, setMeetingScope] = useState("");
   const [filterOffTopic, setFilterOffTopic] = useState(true);
 
@@ -362,20 +366,51 @@ export default function RecordingDetail({
     URL.revokeObjectURL(url);
   }
 
+  function openExportDialog() {
+    setBranding(loadBranding());
+    setBrandingNote("");
+    setShowExportDialog(true);
+  }
+
+  async function handleLogoPicked(file: File | undefined) {
+    if (!file) return;
+    try {
+      const logoDataUrl = await logoFileToDataUrl(file);
+      setBranding((b) => ({ ...b, logoDataUrl }));
+      setBrandingNote("");
+    } catch (e) {
+      setBrandingNote(e instanceof Error ? e.message : "Couldn't use that image.");
+    }
+  }
+
   function handleExportPdf() {
     if (typeof window === "undefined") return;
+    if (!saveBranding(branding)) {
+      // Not fatal: the export still uses these settings, they just aren't remembered.
+      console.warn("Couldn't remember PDF branding (browser storage unavailable or full).");
+    }
+    setShowExportDialog(false);
     // The browser's own "Save as PDF" print target is used instead of a client-side PDF
     // library (jsPDF, etc.) -- it produces a real, selectable-text PDF with correct
     // pagination for free, and needs no extra dependency or server-side rendering step.
     // The hidden .print-view block below (shown only under the @media print / Tailwind
-    // print: rules) is what actually gets printed; document.title is used as the
-    // filename Chrome/Edge suggest in the save dialog, so it's set to something more
-    // useful than the app's own tab title just for this call.
+    // print: rules) is what actually gets printed, styled from the `branding` state;
+    // document.title is used as the filename Chrome/Edge suggest in the save dialog, so it's
+    // set to something more useful than the app's own tab title just for this call.
+    // The short timeout lets React finish closing the dialog before the print pass starts.
     const previousTitle = document.title;
     const safeTitle = (meta?.title ?? "Meeting").trim();
-    document.title = `${safeTitle} - MeetingScribe Report`;
-    window.print();
-    document.title = previousTitle;
+    const suffix =
+      branding.mode === "korevia"
+        ? " - MeetingScribe Report"
+        : branding.mode === "custom" && branding.name.trim()
+        ? ` - ${branding.name.trim()}`
+        : "";
+    document.title = `${safeTitle}${suffix}`;
+    setTimeout(() => {
+      window.print();
+      document.title = previousTitle;
+    }, 100);
   }
 
   async function handleRename() {
@@ -629,7 +664,7 @@ export default function RecordingDetail({
 
             {meta.reportMarkdown && meta.reportMarkdown.trim() && (
               <button
-                onClick={handleExportPdf}
+                onClick={openExportDialog}
                 className="w-full mt-3 border border-white/15 text-slate-200 rounded-lg py-2.5 font-medium hover:bg-white/5 transition flex items-center justify-center gap-2"
               >
                 <PdfIcon /> Export report as PDF
@@ -712,6 +747,144 @@ export default function RecordingDetail({
           </div>
         </div>
       )}
+
+      {showExportDialog && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center z-20 p-4">
+          <div
+            className="glass-card rounded-xl shadow-glow w-full max-w-sm p-4 max-h-[90vh] overflow-y-auto"
+            role="dialog"
+            aria-label="Export report as PDF"
+          >
+            <h2 className="text-base font-semibold text-slate-100 mb-1">Export report as PDF</h2>
+            <p className="text-xs text-slate-500 mb-3">Choose what appears at the top and bottom of the PDF.</p>
+
+            <div className="space-y-2">
+              {(
+                [
+                  ["korevia", "KoreVia MeetingScribe", "KoreVia logo and the MeetingScribe blurb (default)"],
+                  ["custom", "My own branding", "Your logo, name, blurb and footer — no KoreVia branding"],
+                  ["none", "No branding", "Just the title, date and report"],
+                ] as const
+              ).map(([value, label, hint]) => (
+                <label
+                  key={value}
+                  className={`flex items-start gap-2 px-3 py-2 rounded-lg border cursor-pointer transition ${
+                    branding.mode === value ? "border-accent/60 bg-white/5" : "border-white/10 hover:bg-white/5"
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="pdf-brand-mode"
+                    checked={branding.mode === value}
+                    onChange={() => setBranding((b) => ({ ...b, mode: value }))}
+                    className="mt-1 accent-accent"
+                  />
+                  <span>
+                    <span className="block text-sm font-medium text-slate-100">{label}</span>
+                    <span className="block text-xs text-slate-500">{hint}</span>
+                  </span>
+                </label>
+              ))}
+            </div>
+
+            {branding.mode === "custom" && (
+              <div className="mt-3 space-y-3" data-testid="custom-brand-fields">
+                <div>
+                  <span className="block text-xs text-slate-400 mb-1">Logo (optional)</span>
+                  {branding.logoDataUrl ? (
+                    <div className="flex items-center gap-3">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={branding.logoDataUrl}
+                        alt="Your logo"
+                        className="h-12 max-w-[8rem] object-contain bg-white rounded p-1"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setBranding((b) => ({ ...b, logoDataUrl: "" }))}
+                        className="text-xs text-slate-400 hover:text-red-400 transition"
+                      >
+                        Remove logo
+                      </button>
+                    </div>
+                  ) : (
+                    <input
+                      type="file"
+                      accept="image/png,image/jpeg,image/webp,image/svg+xml"
+                      onChange={(e) => {
+                        handleLogoPicked(e.target.files?.[0]);
+                        e.target.value = "";
+                      }}
+                      aria-label="Upload logo"
+                      className="block w-full text-xs text-slate-400 file:mr-3 file:rounded-full file:border-0 file:bg-white/10 file:px-3 file:py-1.5 file:text-xs file:text-slate-200 hover:file:bg-white/15"
+                    />
+                  )}
+                  {brandingNote && <p className="mt-1 text-xs text-red-400">{brandingNote}</p>}
+                </div>
+
+                {(
+                  [
+                    ["name", "Organisation name", "e.g. Acme Pty Ltd", 80],
+                    ["tagline", "Tagline", "e.g. Meeting notes by Acme", 120],
+                  ] as const
+                ).map(([key, label, placeholder, max]) => (
+                  <label key={key} className="block">
+                    <span className="block text-xs text-slate-400 mb-1">{label} (optional)</span>
+                    <input
+                      value={branding[key]}
+                      maxLength={max}
+                      onChange={(e) => setBranding((b) => ({ ...b, [key]: e.target.value }))}
+                      placeholder={placeholder}
+                      className="w-full rounded-lg bg-white/5 border border-white/10 px-2 py-1.5 text-xs text-slate-200 placeholder:text-slate-600"
+                    />
+                  </label>
+                ))}
+
+                <label className="block">
+                  <span className="block text-xs text-slate-400 mb-1">Intro blurb (optional)</span>
+                  <textarea
+                    rows={3}
+                    maxLength={500}
+                    value={branding.blurb}
+                    onChange={(e) => setBranding((b) => ({ ...b, blurb: e.target.value }))}
+                    placeholder="A sentence or two shown under the header."
+                    className="w-full rounded-lg bg-white/5 border border-white/10 px-2 py-1.5 text-xs text-slate-200 placeholder:text-slate-600"
+                  />
+                </label>
+
+                <label className="block">
+                  <span className="block text-xs text-slate-400 mb-1">Footer text (optional)</span>
+                  <input
+                    value={branding.footer}
+                    maxLength={160}
+                    onChange={(e) => setBranding((b) => ({ ...b, footer: e.target.value }))}
+                    placeholder="e.g. Confidential — Acme Pty Ltd"
+                    className="w-full rounded-lg bg-white/5 border border-white/10 px-2 py-1.5 text-xs text-slate-200 placeholder:text-slate-600"
+                  />
+                </label>
+                <p className="text-[11px] text-slate-500">
+                  Anything left empty is simply left off. Saved in this browser only and reused next time.
+                </p>
+              </div>
+            )}
+
+            <div className="mt-4 flex gap-3">
+              <button
+                onClick={() => setShowExportDialog(false)}
+                className="flex-1 border border-white/15 text-slate-300 rounded-lg py-2.5 text-sm hover:bg-white/5 transition"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleExportPdf}
+                className="flex-1 bg-brand-gradient text-white rounded-lg py-2.5 text-sm font-medium hover:brightness-110 transition shadow-glow-blue"
+              >
+                Export PDF
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       </div>
 
       {/* Branded "print view" for PDF export -- invisible on screen (Tailwind's `hidden`),
@@ -722,18 +895,45 @@ export default function RecordingDetail({
           outside the print:hidden app-shell div above (as a fragment sibling), since a
           print:hidden ancestor would hide this too, however this element is styled. */}
       <div className="hidden print:block bg-white text-black p-2 max-w-3xl mx-auto">
-        <div className="flex items-center gap-3 border-b border-slate-300 pb-4 mb-5">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/korevia-logo.png" alt="KoreVia Solutions" className="w-12 h-12 rounded-lg object-cover" />
-          <div>
-            <div className="text-lg font-bold text-slate-900">
-              KoreVia <span className="font-black">MeetingScribe</span>
+        {branding.mode === "korevia" && (
+          <>
+            <div className="flex items-center gap-3 border-b border-slate-300 pb-4 mb-5">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src="/korevia-logo.png" alt="KoreVia Solutions" className="w-12 h-12 rounded-lg object-cover" />
+              <div>
+                <div className="text-lg font-bold text-slate-900">
+                  KoreVia <span className="font-black">MeetingScribe</span>
+                </div>
+                <div className="text-[11px] text-slate-500">AI-powered meeting reports by KoreVia Solutions</div>
+              </div>
             </div>
-            <div className="text-[11px] text-slate-500">AI-powered meeting reports by KoreVia Solutions</div>
-          </div>
-        </div>
+            <p className="text-xs text-slate-600 leading-relaxed italic mb-6">{MEETINGSCRIBE_BLURB}</p>
+          </>
+        )}
 
-        <p className="text-xs text-slate-600 leading-relaxed italic mb-6">{MEETINGSCRIBE_BLURB}</p>
+        {branding.mode === "custom" && (branding.logoDataUrl || branding.name.trim() || branding.tagline.trim()) && (
+          <div className="flex items-center gap-3 border-b border-slate-300 pb-4 mb-5">
+            {branding.logoDataUrl && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={branding.logoDataUrl} alt="" className="h-14 max-w-[10rem] object-contain" />
+            )}
+            {(branding.name.trim() || branding.tagline.trim()) && (
+              <div>
+                {branding.name.trim() && (
+                  <div className="text-lg font-bold text-slate-900">{branding.name.trim()}</div>
+                )}
+                {branding.tagline.trim() && (
+                  <div className="text-[11px] text-slate-500">{branding.tagline.trim()}</div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+        {branding.mode === "custom" && branding.blurb.trim() && (
+          <p className="text-xs text-slate-600 leading-relaxed italic mb-6 whitespace-pre-line">
+            {branding.blurb.trim()}
+          </p>
+        )}
 
         <h1 className="text-xl font-bold text-slate-900 mb-1">{meta.title}</h1>
         <p className="text-xs text-slate-500 mb-6">
@@ -746,9 +946,13 @@ export default function RecordingDetail({
           dangerouslySetInnerHTML={{ __html: renderMarkdown(meta.reportMarkdown ?? "No report yet.") }}
         />
 
-        <div className="mt-10 pt-4 border-t border-slate-200 text-[10px] text-slate-400 text-center">
-          Generated by KoreVia MeetingScribe · korevia.solutions
-        </div>
+        {(branding.mode === "korevia" || (branding.mode === "custom" && branding.footer.trim())) && (
+          <div className="mt-10 pt-4 border-t border-slate-200 text-[10px] text-slate-400 text-center">
+            {branding.mode === "korevia"
+              ? "Generated by KoreVia MeetingScribe · korevia.solutions"
+              : branding.footer.trim()}
+          </div>
+        )}
       </div>
     </>
   );
