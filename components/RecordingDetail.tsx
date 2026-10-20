@@ -306,13 +306,24 @@ export default function RecordingDetail({
         }
 
         const chunk = String(data.chunk ?? "");
-        // A continuation that starts over with a TITLE line has restarted instead of continuing;
-        // use it as the whole text rather than gluing a second copy onto the first.
-        raw = part > 1 && /^\s*TITLE:/.test(chunk) ? chunk : raw + chunk;
-        lastStop = data.stopReason ?? null;
+        // Count what this part cost even if it turns out to be unusable.
         reportIn += data.usage?.inputTokens ?? 0;
         reportOut += data.usage?.outputTokens ?? 0;
         reportUsd = reportUsd !== null && typeof data.costUsd === "number" ? reportUsd + data.costUsd : null;
+
+        // A continuation should pick up where the text stopped. If it instead starts over (a new
+        // TITLE line, or it opens with text that is already in the report), stop here: keep what
+        // we have rather than paying for more copies of the same report.
+        if (part > 1) {
+          const opening = chunk.trim().slice(0, 80);
+          if (/^\s*TITLE:/.test(chunk) || (opening.length >= 40 && raw.includes(opening))) {
+            failedMessage = "the AI started repeating the report instead of continuing it";
+            lastStop = data.stopReason ?? null;
+            break;
+          }
+        }
+        raw += chunk;
+        lastStop = data.stopReason ?? null;
 
         if (lastStop !== "max_tokens") break;
       }

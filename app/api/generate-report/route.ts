@@ -47,6 +47,16 @@ interface AnthropicCallResult {
   outputTokens: number;
 }
 
+/** Claude Sonnet 5 and later think by default, and thinking tokens are billed as output AND count
+ *  against max_tokens (https://platform.claude.com/docs/en/models/sonnet-5/migration-guide). For
+ *  turning a transcript into a report that thinking is wasted: on a long meeting it can use most of
+ *  the 8000-token budget before any report text is written, which looked like "cut off" reports
+ *  and a large bill with no report. So thinking is switched off for those models. Older models
+ *  (e.g. claude-sonnet-4-5) don't think unless asked, so they get no extra parameter. */
+function thinkingParam(model: string): { thinking: { type: "disabled" } } | Record<string, never> {
+  return /^claude-(sonnet|opus|haiku)-([5-9]|\d{2})/.test(model) ? { thinking: { type: "disabled" } } : {};
+}
+
 /** One non-streaming call to the Messages API. Throws (with a short, user-facing message)
  *  on a non-2xx response, matching the error shape the rest of this route already expects. */
 async function callClaude(
@@ -66,6 +76,7 @@ async function callClaude(
     body: JSON.stringify({
       model,
       max_tokens: maxTokens,
+      ...thinkingParam(model),
       system,
       messages,
     }),
@@ -164,7 +175,12 @@ export async function POST(req: Request) {
     ? [
         { role: "user", content: userContent },
         { role: "assistant", content: partial },
-        { role: "user", content: CONTINUE_INSTRUCTION },
+        {
+          role: "user",
+          content:
+            `${CONTINUE_INSTRUCTION}\n\nYour response so far ended with these words (they are ` +
+            `already written, do not repeat them):\n<<<${partial.slice(-300)}>>>`,
+        },
       ]
     : [{ role: "user", content: userContent }];
 

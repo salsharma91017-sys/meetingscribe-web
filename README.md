@@ -407,6 +407,17 @@ rather than thrown away. The cost card counts all parts as one report, so a long
 because each part re-sends the transcript. The earlier completeness check (every commitment must reach
 the action items) makes reports a little longer, which is what tipped this meeting over the old limit.
 
+### Fixed: reports "cut off" and costing a lot with no report (2026-10-20)
+
+Claude Sonnet 5 thinks by default, and Anthropic counts that thinking against the same output limit as
+the report text and bills it as output (see the Sonnet 5 migration guide). On a long meeting it could use
+up most of each 8,000-token part before writing much report, which is why reports looked cut off and the
+cost card climbed with nothing to show. The app now sends `thinking: disabled` for Sonnet 5 and later
+(older models like claude-sonnet-4-5 don't think unless asked, so they get no extra setting). Two
+safeguards were added as well: a continuation now repeats the last ~300 characters it must pick up
+after, and if a continuation starts over instead of continuing, the app stops and keeps what it has
+instead of paying for more copies.
+
 ## Known limitations, worth knowing about
 
 - **Storage is per-browser.** Recordings live in that browser's IndexedDB — they won't show up
