@@ -394,6 +394,19 @@ it on an existing scribe, open it, tap "Regenerate report" and pick a template; 
 is reused, so it costs a few cents for the report only. It's still an AI instruction, not a guarantee,
 so skim the action list against the discussion on important meetings.
 
+### Fixed: reports still cut off on long meetings (2026-10-20)
+
+A very long meeting with a detailed template could still end with "this report was cut off ... even
+after an automatic continuation". The server chained at most two Claude calls inside one request
+because they all had to finish within Vercel's 300-second limit. The continuation now happens from the
+browser instead: each request makes one Claude call (up to 8,000 output tokens, roughly two minutes),
+and while Claude says it ran out of space the next request continues from the text so far, up to 5 parts
+(about 40,000 tokens). The status line shows "Writing report… (part 2)" and so on. If a later part
+fails (for example the AI service is overloaded), the text written so far is kept and marked incomplete
+rather than thrown away. The cost card counts all parts as one report, so a long report costs more
+because each part re-sends the transcript. The earlier completeness check (every commitment must reach
+the action items) makes reports a little longer, which is what tipped this meeting over the old limit.
+
 ## Known limitations, worth knowing about
 
 - **Storage is per-browser.** Recordings live in that browser's IndexedDB — they won't show up

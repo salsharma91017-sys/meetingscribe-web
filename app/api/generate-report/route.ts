@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { buildSystemPrompt, buildUserContent, parseReportResponse } from "@/lib/reportFormat";
+import { buildSystemPrompt, buildUserContent } from "@/lib/reportFormat";
 import { claudeCostUsd, positiveNumber, ClaudePrice } from "@/lib/pricing";
 
 export const runtime = "nodejs";
@@ -112,6 +112,8 @@ export async function POST(req: Request) {
     model?: string;
     meetingScope?: string;
     filterOffTopic?: boolean;
+    /** Text already written by earlier calls; when present, this call continues it. */
+    partial?: string;
   };
   try {
     payload = await req.json();
@@ -138,33 +140,18 @@ export async function POST(req: Request) {
       ? { inputUsdPerMTok: inOverride, outputUsdPerMTok: outOverride }
       : null;
 
-  // Some templates (e.g. the white-paper-style ones, or long/dense meetings like an
-  // hours-long operations review) ask for a genuinely long, detailed document. A single
-  // non-streaming call is capped at INITIAL_MAX_TOKENS output tokens -- if Claude hits that
-  // cap mid-report (stop_reason: "max_tokens"), the response would previously just be cut
-  // off mid-sentence with no error at all, which is confusing (it looks like the report
-  // "finished" but is actually incomplete). Instead, when that happens, this makes up to
-  // MAX_CONTINUATIONS follow-up calls asking Claude to continue from where it stopped.
+  // ONE Claude call per request. Long reports (a dense hours-long meeting with a detailed
+  // template) can need more output than fits in one call, and chaining several calls inside a
+  // single request is capped by the 300s function limit -- which is how reports used to get
+  // "cut off ... even after an automatic continuation". So the continuation loop now lives in the
+  // browser (components/RecordingDetail.tsx): it calls this route again with `partial` (the text
+  // written so far) for as long as Claude says it hit its output limit, so each request is
+  // short (8000 tokens is roughly two minutes) and a report can run to many parts.
   //
-  // The natural way to do this is "assistant message prefill" (send the partial answer back
-  // as the last message with role "assistant", so the API just continues that exact turn).
-  // claude-sonnet-5 doesn't support that ("This model does not support assistant message
-  // prefill. The conversation must end with a user message."), so instead the partial answer
-  // is sent back as an assistant turn followed by an explicit user turn asking it to continue
-  // from exactly that point with no repeated or re-summarized content -- slightly less
-  // guaranteed seamless than true prefill, but works with any model.
-  //
-  // Token/time budget: this route is one blocking sequence of calls, so all of their
-  // generation time counts against maxDuration (300s) above. At typical Sonnet throughput
-  // (roughly 65 output tokens/sec), INITIAL_MAX_TOKENS (8000) + MAX_CONTINUATIONS *
-  // CONTINUATION_MAX_TOKENS (1 * 6000) = 14000 tokens worst-case is ~215s of generation,
-  // leaving headroom for input processing and network latency across the up-to-2 calls.
-  // Going further (e.g. a 2nd continuation) would push the worst case close to or past the
-  // 300s ceiling and risk trading this truncation problem for the earlier 504 timeout
-  // problem, so it's intentionally limited to one continuation round.
-  const INITIAL_MAX_TOKENS = 8000;
-  const CONTINUATION_MAX_TOKENS = 6000;
-  const MAX_CONTINUATIONS = 1;
+  // Continuing uses an assistant turn followed by an explicit user turn, not assistant "prefill",
+  // because claude-sonnet-5 rejects prefill ("This model does not support assistant message
+  // prefill. The conversation must end with a user message.").
+  const MAX_TOKENS_PER_CALL = 8000;
   const CONTINUE_INSTRUCTION =
     "Your previous response was cut off before it was finished. Continue writing from " +
     "exactly where you left off. Do not repeat anything you already wrote, do not " +
@@ -172,58 +159,23 @@ export async function POST(req: Request) {
     "preamble like 'Continuing...' -- just resume the Markdown report text, starting with " +
     "whatever character would naturally come next.";
 
+  const partial = typeof payload.partial === "string" ? payload.partial : "";
+  const messages: AnthropicMessage[] = partial
+    ? [
+        { role: "user", content: userContent },
+        { role: "assistant", content: partial },
+        { role: "user", content: CONTINUE_INSTRUCTION },
+      ]
+    : [{ role: "user", content: userContent }];
+
   try {
-    let full = "";
-    let stopReason: string | null = null;
-    let continuations = 0;
-    let inputTokens = 0;
-    let outputTokens = 0;
-
-    while (true) {
-      const messages: AnthropicMessage[] =
-        continuations === 0
-          ? [{ role: "user", content: userContent }]
-          : [
-              { role: "user", content: userContent },
-              { role: "assistant", content: full },
-              { role: "user", content: CONTINUE_INSTRUCTION },
-            ];
-      const maxTokens = continuations === 0 ? INITIAL_MAX_TOKENS : CONTINUATION_MAX_TOKENS;
-
-      const result = await callClaude(apiKey, model, system, messages, maxTokens);
-      full += result.text;
-      stopReason = result.stopReason;
-      inputTokens += result.inputTokens;
-      outputTokens += result.outputTokens;
-
-      if (stopReason !== "max_tokens" || continuations >= MAX_CONTINUATIONS) break;
-      continuations += 1;
-    }
-
-    const parsed = parseReportResponse(full.trim());
-    let report = parsed.report;
-    const { title } = parsed;
-    const omitted = filterOffTopic ? parsed.omitted : [];
-
-    // With the filter on, the model ends the report with an '===OMITTED===' marker. If that
-    // marker is present the report reached its end, so a max_tokens stop reason can only mean
-    // the (short) omitted list was clipped -- not that the report itself was cut off.
-    const truncated = stopReason === "max_tokens" && !(filterOffTopic && parsed.omittedMarkerFound);
-    if (truncated) {
-      report +=
-        "\n\n---\n\n*Note: this report was cut off because it hit the model's maximum " +
-        "output length, even after an automatic continuation. Try regenerating, splitting " +
-        "the meeting into shorter recordings, or using a shorter/less detailed template.*";
-    }
-
-    const costUsd = claudeCostUsd(model, inputTokens, outputTokens, priceOverride);
+    const result = await callClaude(apiKey, model, system, messages, MAX_TOKENS_PER_CALL);
+    const costUsd = claudeCostUsd(model, result.inputTokens, result.outputTokens, priceOverride);
 
     return NextResponse.json({
-      report,
-      title,
-      omitted,
-      truncated,
-      usage: { inputTokens, outputTokens },
+      chunk: result.text,
+      stopReason: result.stopReason,
+      usage: { inputTokens: result.inputTokens, outputTokens: result.outputTokens },
       costUsd,
       model,
     });

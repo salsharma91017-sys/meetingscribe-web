@@ -20,6 +20,7 @@ import {
 } from "@/lib/pricing";
 import { renderMarkdown } from "@/lib/markdown";
 import { readJsonResponse } from "@/lib/apiResponse";
+import { finalizeReport } from "@/lib/reportFormat";
 import { PdfBranding, DEFAULT_BRANDING, loadBranding, saveBranding, logoFileToDataUrl } from "@/lib/branding";
 import {
   ChevronLeftIcon,
@@ -39,6 +40,8 @@ type Tab = "report" | "transcript";
 // component and handleExportPdf()) -- kept in the same voice as the "About KoreVia Solutions"
 // blurb on the login page, but focused on MeetingScribe itself.
 const FILTER_PREF_KEY = "meetingscribe.filterOffTopic";
+// Each part is up to 8000 output tokens, so this allows a report of up to ~40,000 tokens.
+const MAX_REPORT_PARTS = 5;
 
 const MEETINGSCRIBE_BLURB =
   "MeetingScribe is KoreVia Solutions' AI-powered meeting companion. It records your " +
@@ -261,55 +264,76 @@ export default function RecordingDetail({
         setMeta(working);
       }
 
-      setProcessingStatus("Writing report…");
-      const reportRes = await fetch("/api/generate-report", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          transcript,
-          templateInstructions: template.instructions,
-          meetingScope: scope || undefined,
-          filterOffTopic,
-        }),
-      });
-      let reportData: {
-        report?: string;
-        title?: string;
-        omitted?: string[];
+      // The report is written in parts: each request makes one Claude call (about two minutes at
+      // most), and if Claude says it ran out of output space the next request continues from the
+      // text so far. That keeps every request well inside the server's time limit, however long
+      // the report turns out to be. See app/api/generate-report/route.ts.
+      type ReportPart = {
+        chunk?: string;
+        stopReason?: string | null;
         usage?: { inputTokens?: number; outputTokens?: number };
         costUsd?: number | null;
       };
-      try {
-        reportData = await readJsonResponse(reportRes);
-      } catch (e) {
-        const detail = e instanceof Error ? e.message : "Unknown error";
-        throw new Error(`Report generation failed: ${detail}`);
+      let raw = "";
+      let lastStop: string | null = null;
+      let failedMessage: string | undefined;
+      let reportIn = 0;
+      let reportOut = 0;
+      let reportUsd: number | null = 0;
+
+      for (let part = 1; part <= MAX_REPORT_PARTS; part++) {
+        setProcessingStatus(part === 1 ? "Writing report…" : `Writing report… (part ${part})`);
+        let data: ReportPart;
+        try {
+          const res = await fetch("/api/generate-report", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              transcript,
+              templateInstructions: template.instructions,
+              meetingScope: scope || undefined,
+              filterOffTopic,
+              partial: raw || undefined,
+            }),
+          });
+          data = await readJsonResponse(res);
+        } catch (e) {
+          const detail = e instanceof Error ? e.message : "Unknown error";
+          // Nothing written yet: a normal failure. Otherwise keep what was already paid for.
+          if (!raw) throw new Error(`Report generation failed: ${detail}`);
+          failedMessage = detail;
+          break;
+        }
+
+        const chunk = String(data.chunk ?? "");
+        // A continuation that starts over with a TITLE line has restarted instead of continuing;
+        // use it as the whole text rather than gluing a second copy onto the first.
+        raw = part > 1 && /^\s*TITLE:/.test(chunk) ? chunk : raw + chunk;
+        lastStop = data.stopReason ?? null;
+        reportIn += data.usage?.inputTokens ?? 0;
+        reportOut += data.usage?.outputTokens ?? 0;
+        reportUsd = reportUsd !== null && typeof data.costUsd === "number" ? reportUsd + data.costUsd : null;
+
+        if (lastStop !== "max_tokens") break;
       }
 
-      const generatedTitle =
-        typeof reportData.title === "string" && reportData.title.trim()
-          ? reportData.title.trim()
-          : null;
+      const final = finalizeReport(raw, lastStop, filterOffTopic, failedMessage);
+      const generatedTitle = final.title && final.title.trim() ? final.title.trim() : null;
 
-      cost = addReport(
-        cost,
-        reportData.usage?.inputTokens ?? 0,
-        reportData.usage?.outputTokens ?? 0,
-        typeof reportData.costUsd === "number" ? reportData.costUsd : null
-      );
+      cost = addReport(cost, reportIn, reportOut, reportUsd);
 
       const updated: RecordingMeta = {
         ...working,
         title: generatedTitle ?? working.title,
         status: "done",
         transcript,
-        reportMarkdown: String(reportData.report ?? ""),
+        reportMarkdown: final.report,
         templateIdUsed: template.id,
         errorMessage: undefined,
         cost,
         meetingScope: scope || undefined,
         filterOffTopic,
-        omittedItems: filterOffTopic && Array.isArray(reportData.omitted) ? reportData.omitted : [],
+        omittedItems: final.omitted,
       };
       await saveRecording(updated);
       setMeta(updated);

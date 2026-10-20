@@ -138,3 +138,42 @@ export function parseReportResponse(raw: string): ParsedReport {
   }
   return { title: null, report: stripTrailingRule(body), omitted, omittedMarkerFound };
 }
+
+export interface FinalReport {
+  title: string | null;
+  report: string;
+  omitted: string[];
+  /** True if the report is known (or likely) to be incomplete, in which case a note was added. */
+  truncated: boolean;
+}
+
+/** Builds the final report from the raw text the model wrote across one or more calls.
+ *  `failedMessage` is set by the caller if a later part failed, so the text so far is kept and
+ *  marked incomplete. */
+export function finalizeReport(
+  raw: string,
+  lastStopReason: string | null,
+  filterOffTopic: boolean,
+  failedMessage?: string
+): FinalReport {
+  const parsed = parseReportResponse(raw.trim());
+  let report = parsed.report;
+  const omitted = filterOffTopic ? parsed.omitted : [];
+
+  // With the filter on, the model ends the report with an '===OMITTED===' marker. If that
+  // marker is present the report reached its end, so a max_tokens stop can only mean the (short)
+  // omitted list was clipped, not the report itself.
+  const hitLimit = lastStopReason === "max_tokens" && !(filterOffTopic && parsed.omittedMarkerFound);
+  const truncated = hitLimit || Boolean(failedMessage);
+  if (failedMessage) {
+    report +=
+      "\n\n---\n\n*Note: this report is incomplete. The AI service stopped while the report " +
+      `was still being written (${failedMessage}). Tap "Regenerate report" to try again.*`;
+  } else if (hitLimit) {
+    report +=
+      "\n\n---\n\n*Note: this report is incomplete: it reached the maximum length the app " +
+      "allows, even after several automatic continuations. Try splitting the meeting into " +
+      "shorter recordings, or use a shorter, less detailed template.*";
+  }
+  return { title: parsed.title, report, omitted, truncated };
+}
