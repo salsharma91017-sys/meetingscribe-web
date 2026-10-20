@@ -382,6 +382,18 @@ appears. "No branding" prints only the title, date and report. Your choice is re
 Tip: Chrome's print dialog has a "Headers and footers" option that adds the page URL and date to each
 page. That's the browser's, not the app's; untick it for a fully clean PDF.
 
+### Added: action-item completeness check on every report (2026-10-20)
+
+A scribe could write a commitment up under its topic (for example "Sel updates the specs, Noah signs
+off, then the specs go to the BioCV contact") but leave it out of the Action Items list. Every report
+now carries an instruction, applied on the server so it covers all templates including custom ones and
+existing installs, to go back through each topic before finishing and make sure every commitment,
+hand-off, call to arrange, follow-up, dependency and decision-to-implement is also in the action items
+(and every decision in a Decisions section), with owners and dates only when actually stated. To get
+it on an existing scribe, open it, tap "Regenerate report" and pick a template; the saved transcript
+is reused, so it costs a few cents for the report only. It's still an AI instruction, not a guarantee,
+so skim the action list against the discussion on important meetings.
+
 ## Known limitations, worth knowing about
 
 - **Storage is per-browser.** Recordings live in that browser's IndexedDB — they won't show up

@@ -45,10 +45,33 @@ const SCOPE_GUARD_RAILS =
   "weekend plans' or '- Phone call with a customer about a quote'). If nothing was left " +
   "out, write '- None'.";
 
+/** Action-item completeness check. Reports used to list each topic's discussion well but then
+ *  build the Action Items list from only some of it, so commitments that were written up under a
+ *  topic (e.g. "Sel will update the specs, Noah signs off, then...") never reached the list.
+ *  Applied server-side to every template, built-in or custom, for the same reason as the scope
+ *  guard rails: built-in templates are stored in the browser once, so editing their wording
+ *  wouldn't reach existing installs. */
+const ACTION_COMPLETENESS =
+  " ACTION ITEM COMPLETENESS — this applies to any action items, next steps or plan section, and " +
+  "wins if it conflicts with the report instructions. Before you finish, go back through every " +
+  "topic you wrote up and check that each commitment is also listed there: anything someone said " +
+  "they or another person will do, agreed processes and hand-offs (write a sequence like 'A updates " +
+  "the specs, B signs off, then A sends them to C' as one action naming the whole sequence and who " +
+  "does each step), meetings or calls to be arranged or attended, things someone is to provide, " +
+  "investigate or confirm, follow-ups that depend on something else finishing, decisions that " +
+  "someone now has to implement or build, and open questions someone has to get answered. A step " +
+  "that already appears in the discussion section is still an action item if someone has to do it. " +
+  "Use one action per distinct commitment and list a commitment once even if it came up several " +
+  "times. Add an owner or date only if the transcript states it; never guess one. If speakers gave " +
+  "different owners, dates or outcomes for the same thing, say so in that action instead of quietly " +
+  "choosing one. Do not add items that only describe the past or a general wish that nobody is " +
+  "responsible for. If a report section is meant to list decisions, also make sure every decision " +
+  "stated in the discussion appears there.";
+
 export function buildSystemPrompt(filterOffTopic: boolean): string {
   return filterOffTopic
-    ? BASE_PROMPT + FORMAT_WITH_OMITTED + SCOPE_GUARD_RAILS
-    : BASE_PROMPT + FORMAT_PLAIN;
+    ? BASE_PROMPT + FORMAT_WITH_OMITTED + ACTION_COMPLETENESS + SCOPE_GUARD_RAILS
+    : BASE_PROMPT + FORMAT_PLAIN + ACTION_COMPLETENESS;
 }
 
 const MAX_SCOPE_CHARS = 600;
