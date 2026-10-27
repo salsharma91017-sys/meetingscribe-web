@@ -152,7 +152,15 @@ A bullet list of concrete decisions that were agreed on. If none were made, writ
 "No decisions were recorded."
 
 ## Action Items
-A bullet list in the form "Action — Owner (if stated) — Due date (if stated)".
+Concrete action items, each as a bullet in the form "Action — Owner (if stated) — Due date (if
+stated)".
+Group the action items by type of work, under a level-3 heading for each group, instead of one
+flat list. Choose the groups from what this meeting was actually about, usually three to seven
+(for example "Technical / Platform", "Finance & Admin", "Partnerships & Suppliers", "Legal &
+Compliance", "Operations", "Product"), and use short, plain names. Put each action under the
+single group that fits it best, in the order the actions came up within that group. Only create
+a group that has at least one action in it, and put anything that doesn't fit anywhere under
+"Other". Every commitment from the meeting must still appear exactly once.
 
 ## Next Steps
 A short bullet list of what happens next.
@@ -299,9 +307,17 @@ example a short list of specific features belonging to one broader point.
 - [what was said or decided]
 
 ## Action Items
-A bullet list of concrete action items in the form "Action — Owner (if stated) — Due date (if
-stated)". If no action items came up, write "No action items were recorded." instead of leaving
-the section empty.
+Concrete action items, each as a bullet in the form "Action — Owner (if stated) — Due date (if
+stated)".
+Group the action items by type of work, under a level-3 heading for each group, instead of one
+flat list. Choose the groups from what this meeting was actually about, usually three to seven
+(for example "Technical / Platform", "Finance & Admin", "Partnerships & Suppliers", "Legal &
+Compliance", "Operations", "Product"), and use short, plain names. Put each action under the
+single group that fits it best, in the order the actions came up within that group. Only create
+a group that has at least one action in it, and put anything that doesn't fit anywhere under
+"Other". Every commitment from the meeting must still appear exactly once.
+If no action items came up, write "No action items were recorded." instead of leaving the
+section empty.
 
 Only use information that is actually present in the transcript. Do not invent names, dates,
 company names, or commitments. If the transcript doesn't give you something this format expects

@@ -418,6 +418,18 @@ safeguards were added as well: a continuation now repeats the last ~300 characte
 after, and if a continuation starts over instead of continuing, the app stops and keeps what it has
 instead of paying for more copies.
 
+### Changed: action items grouped by type of work (2026-10-27)
+
+How action items are laid out comes from the report template, not the app's code. The built-in
+"CoVet-Style Meeting Summary" and "Business Meeting" templates now ask for the Action Items to be grouped
+under headings by type of work (the AI picks three to seven groups that fit the meeting, such as
+Technical / Platform, Finance & Admin, Partnerships & Suppliers), with "Other" for anything that doesn't
+fit. The only fixed rule in code is the completeness check, which makes sure every commitment is listed
+once. It doesn't dictate layout. Built-in templates are saved in the browser the first time they're used,
+so an existing install keeps its old wording: open Templates, pick the template and use "Reset to default
+wording" to get the new one (this discards your edits to that template), or paste the grouping paragraph
+into your own edited copy.
+
 ## Known limitations, worth knowing about
 
 - **Storage is per-browser.** Recordings live in that browser's IndexedDB — they won't show up
